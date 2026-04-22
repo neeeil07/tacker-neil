@@ -14,7 +14,7 @@ import os
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Centro de Mando · Neil", page_icon="🏋️", layout="wide")
+st.set_page_config(page_title="Training Command Center · Neil", page_icon=None, layout="wide")
 
 DB_PATH = "training.db"
 MACROS_TARGET = {"kcal": 1850, "protein": 135, "fat": 40, "carbs": 235}
@@ -550,7 +550,7 @@ def macro_bar(label, current, target, color):
     <div style='margin-bottom:8px'>
       <div style='display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px'>
         <span><b>{label}</b></span>
-        <span style='color:{"#e74c3c" if over else "#555"}'>{current:.0f} / {target} {"⚠️" if over else ""}</span>
+        <span style='color:{"#e74c3c" if over else "#94a3b8"}'>  {current:.0f} / {target} {" " if over else ""}</span>
       </div>
       <div style='background:#e9ecef;border-radius:8px;height:12px'>
         <div style='background:{bar_color};width:{pct*100:.1f}%;height:12px;border-radius:8px;transition:width 0.3s'></div>
@@ -564,10 +564,10 @@ def render_exercise_block(ex, current_mc):
     sets = get_sets(ex_id, current_mc)
     tonelaje = calc_tonelaje(ex_id, current_mc)
 
-    with st.expander(f"🔹 **{ex_name}** — {ex['reps_obj']}  |  Ton: **{tonelaje:,.0f} kg**"):
+    with st.expander(f"**{ex_name}** — {ex['reps_obj']}  |  Tonelaje: **{tonelaje:,.0f} kg**"):
         cols = st.columns([0.3, 0.3, 0.2, 0.2, 0.1])
         cols[0].markdown("**RIR**"); cols[1].markdown("**Reps**")
-        cols[2].markdown("**Kg**"); cols[3].markdown("**Ton.**"); cols[4].markdown("**🗑**")
+        cols[2].markdown("**Kg**"); cols[3].markdown("**Ton.**"); cols[4].markdown("**—**")
 
         existing = {s["set_num"]: s for s in sets}
         n_sets = max(len(sets), 3)
@@ -580,17 +580,17 @@ def render_exercise_block(ex, current_mc):
             reps = c1.number_input("", value=float(s.get("reps",0)), min_value=0.0, step=1.0,  key=f"reps_{key}", label_visibility="collapsed")
             kg   = c2.number_input("", value=float(s.get("kg",0)),  min_value=0.0, step=2.5,  key=f"kg_{key}",   label_visibility="collapsed")
             c3.markdown(f"<div style='padding-top:8px'>{reps*kg:,.0f}</div>", unsafe_allow_html=True)
-            if c4.button("✕", key=f"del_{key}") and sn in existing:
+            if c4.button("X", key=f"del_{key}") and sn in existing:
                 delete_set(ex_id, current_mc, sn)
                 st.rerun()
             if reps > 0 and kg > 0:
                 upsert_set(ex_id, current_mc, sn, reps, kg, rir)
 
         c_add, c_del_ex = st.columns(2)
-        if c_add.button(f"➕ Serie", key=f"add_set_{ex_id}_{current_mc}"):
+        if c_add.button("+ Añadir serie", key=f"add_set_{ex_id}_{current_mc}"):
             upsert_set(ex_id, current_mc, n_sets + 1, 0, 0, 1)
             st.rerun()
-        if c_del_ex.button(f"🗑 Quitar ejercicio", key=f"del_ex_{ex_id}"):
+        if c_del_ex.button("Quitar ejercicio", key=f"del_ex_{ex_id}"):
             deactivate_exercise(ex_id)
             st.rerun()
 
@@ -598,11 +598,11 @@ def render_exercise_block(ex, current_mc):
 # PAGES
 # ─────────────────────────────────────────────────────────────────────────────
 def page_dashboard():
-    st.title("🏠 Centro de Mando")
+    st.title("Centro de Mando")
     current_mc = get_current_mc()
 
     # ── Macro KPIs ──
-    st.subheader("🎯 KPIs Nutricionales Diarios")
+    st.subheader("KPIs Nutricionales — Hoy")
     today_str = str(date.today())
     conn = get_conn()
     today_row = conn.execute("SELECT * FROM macros_log WHERE log_date=?", (today_str,)).fetchone()
@@ -610,17 +610,17 @@ def page_dashboard():
     cur = {k: (today_row[k] if today_row else 0) for k in ["kcal","protein","carbs","fat"]}
 
     k1, k2, k3, k4 = st.columns(4)
-    def kpi(col, label, val, target, unit, icon):
+    def kpi(col, label, val, target, unit):
         delta = val - target
-        col.metric(f"{icon} {label}", f"{val:.0f} {unit}", f"{delta:+.0f} vs target")
-    kpi(k1,"Calorías",cur["kcal"],MACROS_TARGET["kcal"],"kcal","🔥")
-    kpi(k2,"Proteína",cur["protein"],MACROS_TARGET["protein"],"g","🥩")
-    kpi(k3,"Carbos",cur["carbs"],MACROS_TARGET["carbs"],"g","🍚")
-    kpi(k4,"Grasa",cur["fat"],MACROS_TARGET["fat"],"g","🫒")
+        col.metric(label, f"{val:.0f} {unit}", f"{delta:+.0f} vs objetivo")
+    kpi(k1,"Calorías",cur["kcal"],MACROS_TARGET["kcal"],"kcal")
+    kpi(k2,"Proteína",cur["protein"],MACROS_TARGET["protein"],"g")
+    kpi(k3,"Carbos",cur["carbs"],MACROS_TARGET["carbs"],"g")
+    kpi(k4,"Grasa",cur["fat"],MACROS_TARGET["fat"],"g")
 
     st.markdown("---")
     # ── Registrar macros hoy ──
-    with st.expander("📝 Registrar macros de hoy", expanded=not bool(today_row)):
+    with st.expander("Registrar macros de hoy", expanded=not bool(today_row)):
         with st.form("macro_form"):
             col_a, col_b, col_c, col_d = st.columns(4)
             kcal    = col_a.number_input("Kcal", value=float(cur["kcal"]), step=10.0)
@@ -628,23 +628,23 @@ def page_dashboard():
             carbs   = col_c.number_input("Carbos (g)", value=float(cur["carbs"]), step=1.0)
             fat     = col_d.number_input("Grasa (g)", value=float(cur["fat"]), step=0.5)
             notes   = st.text_input("Notas", value=today_row["notes"] if today_row else "")
-            if st.form_submit_button("💾 Guardar"):
+            if st.form_submit_button("Guardar"):
                 conn = get_conn()
                 conn.execute("""INSERT OR REPLACE INTO macros_log(log_date,kcal,protein,carbs,fat,notes)
                                 VALUES(?,?,?,?,?,?)""", (today_str, kcal, protein, carbs, fat, notes))
                 conn.commit(); conn.close()
-                st.success("¡Guardado!"); st.rerun()
+                st.success("Guardado correctamente."); st.rerun()
 
     col_bars, col_weight = st.columns([1, 1])
     with col_bars:
-        st.subheader("📊 Barras de macros (hoy)")
+        st.subheader("Distribución de macros — Hoy")
         macro_bar("Calorías", cur["kcal"],    MACROS_TARGET["kcal"],    "#e67e22")
         macro_bar("Proteína", cur["protein"], MACROS_TARGET["protein"], "#2980b9")
         macro_bar("Carbos",   cur["carbs"],   MACROS_TARGET["carbs"],   "#27ae60")
         macro_bar("Grasa",    cur["fat"],     MACROS_TARGET["fat"],     "#8e44ad")
 
     with col_weight:
-        st.subheader("📈 Peso corporal (MC01–MC04+)")
+        st.subheader("Evolución del peso corporal")
         conn = get_conn()
         bm = pd.DataFrame([dict(r) for r in conn.execute(
             "SELECT metric_date, weight, bf_pct FROM body_metrics WHERE weight IS NOT NULL ORDER BY metric_date"
@@ -660,7 +660,7 @@ def page_dashboard():
             st.plotly_chart(fig, use_container_width=True)
 
     # ── Macro trends ──
-    st.subheader("📉 Histórico macro (últimas 4 semanas)")
+    st.subheader("Histórico de macros — Últimas 4 semanas")
     conn = get_conn()
     ml = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT * FROM macros_log ORDER BY log_date DESC LIMIT 28"
@@ -679,12 +679,12 @@ def page_dashboard():
 def page_day(day):
     abbr, descr = DAY_LABELS[day]
     current_mc = get_current_mc()
-    st.title(f"🏋️ DAY {day} — {abbr}  ·  {descr}")
+    st.title(f"Day {day} — {abbr}  ·  {descr}")
 
     # Tonelaje sesión
     exercises = get_exercises(day)
     session_ton = sum(calc_tonelaje(e["id"], current_mc) for e in exercises)
-    st.metric("⚡ Tonelaje total de la sesión", f"{session_ton:,.0f} kg")
+    st.metric("Tonelaje total de la sesión", f"{session_ton:,.0f} kg")
     st.caption(f"Microciclo activo: **{current_mc}**")
     st.markdown("---")
 
@@ -692,7 +692,7 @@ def page_day(day):
         render_exercise_block(ex, current_mc)
 
     st.markdown("---")
-    with st.expander("➕ Añadir ejercicio nuevo"):
+    with st.expander("Añadir ejercicio nuevo"):
         with st.form(f"add_ex_day{day}"):
             new_name = st.text_input("Nombre del ejercicio")
             new_reps = st.text_input("Reps objetivo", value="10-12")
@@ -702,7 +702,7 @@ def page_day(day):
 
 
 def page_progress():
-    st.title("📊 Progresión de Tonelaje")
+    st.title("Progresión de Tonelaje")
     current_mc = get_current_mc()
     all_mcs = ["MC01","MC02","MC03","MC04","MC05","MC06","MC07","MC08"]
 
@@ -762,7 +762,7 @@ def page_progress():
                 st.info("Sin datos para este ejercicio aún.")
 
     # ── Evolución peso corporal ──
-    st.subheader("📈 Evolución peso corporal + BF%")
+    st.subheader("Evolución del peso corporal y BF%")
     conn = get_conn()
     bm = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT metric_date,weight,bf_pct FROM body_metrics WHERE weight IS NOT NULL ORDER BY metric_date"
@@ -785,7 +785,7 @@ def page_progress():
 
 
 def page_settings():
-    st.title("⚙️ Configuración")
+    st.title("Configuración")
     current_mc = get_current_mc()
     all_mcs = [f"MC{i:02d}" for i in range(1,9)]
     new_mc = st.selectbox("Microciclo activo", all_mcs, index=all_mcs.index(current_mc) if current_mc in all_mcs else 4)
@@ -795,7 +795,7 @@ def page_settings():
         st.rerun()
 
     st.markdown("---")
-    st.subheader("📥 Registro corporal")
+    st.subheader("Registro de métricas corporales")
     with st.form("body_form"):
         col1, col2, col3, col4 = st.columns(4)
         b_date  = col1.date_input("Fecha", value=date.today())
@@ -803,7 +803,7 @@ def page_settings():
         b_steps = col3.number_input("Pasos", min_value=0, step=500)
         b_sleep = col4.number_input("Sueño (h)", min_value=0.0, step=0.25)
         b_notes = st.text_input("Notas")
-        if st.form_submit_button("💾 Guardar"):
+        if st.form_submit_button("Guardar"):
             conn = get_conn()
             conn.execute("""INSERT OR REPLACE INTO body_metrics(metric_date,weight,steps,sleep,notes)
                             VALUES(?,?,?,?,?)""",
@@ -812,7 +812,7 @@ def page_settings():
             st.success("Guardado.")
 
     st.markdown("---")
-    st.subheader("🗄 Últimas entradas — Métricas corporales")
+    st.subheader("Historial de métricas corporales")
     conn = get_conn()
     bm = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT metric_date,weight,steps,sleep,bf_pct,notes FROM body_metrics ORDER BY metric_date DESC LIMIT 14"
@@ -822,7 +822,7 @@ def page_settings():
         st.dataframe(bm, use_container_width=True)
 
     st.markdown("---")
-    if st.button("🔄 Re-ejecutar bootstrap (resetea ejercicios históricos)"):
+    if st.button("Re-ejecutar bootstrap (resetea ejercicios históricos)"):
         conn = get_conn()
         conn.execute("DELETE FROM app_config WHERE key='bootstrapped'")
         conn.commit()
@@ -835,11 +835,152 @@ def page_settings():
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-[data-testid="stSidebar"] { background: #1a1a2e; }
-[data-testid="stSidebar"] * { color: #e0e0e0 !important; }
-.stExpander { border: 1px solid #dee2e6; border-radius: 8px; margin-bottom: 8px; }
-.stMetric { background: #f8f9fa; border-radius: 8px; padding: 12px; }
-div[data-testid="stNumberInput"] > div > input { font-size: 14px; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+/* ── App background ── */
+.stApp {
+    background: #0d1117;
+    color: #e6edf3;
+}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+    border-right: 1px solid #21262d;
+}
+[data-testid="stSidebar"] * { color: #c9d1d9 !important; }
+[data-testid="stSidebar"] .stMarkdown h2 {
+    color: #58a6ff !important;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+}
+
+/* ── Sidebar nav buttons ── */
+[data-testid="stSidebar"] .stButton > button {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #8b949e !important;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-align: left;
+    padding: 8px 12px;
+    margin-bottom: 2px;
+    transition: all 0.15s ease;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: #21262d;
+    border-color: #30363d;
+    color: #e6edf3 !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    background: #1f6feb;
+    border-color: #1f6feb;
+    color: #ffffff !important;
+}
+
+/* ── Main content headings ── */
+h1 {
+    font-size: 1.625rem;
+    font-weight: 700;
+    color: #e6edf3;
+    letter-spacing: -0.02em;
+    border-bottom: 1px solid #21262d;
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.25rem;
+}
+h2 { font-size: 1.125rem; font-weight: 600; color: #c9d1d9; }
+h3 { font-size: 0.95rem; font-weight: 500; color: #8b949e; }
+
+/* ── Metric cards ── */
+[data-testid="stMetric"] {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 16px;
+}
+[data-testid="stMetricLabel"] { color: #8b949e; font-size: 0.8rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+[data-testid="stMetricValue"] { color: #e6edf3; font-size: 1.5rem; font-weight: 700; }
+[data-testid="stMetricDelta"] { font-size: 0.8rem; }
+
+/* ── Expanders ── */
+.stExpander {
+    background: #161b22;
+    border: 1px solid #21262d !important;
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+.stExpander summary {
+    font-weight: 500;
+    color: #c9d1d9;
+    font-size: 0.9rem;
+}
+
+/* ── Number inputs ── */
+div[data-testid="stNumberInput"] > div > input {
+    font-size: 14px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+}
+
+/* ── Buttons ── */
+.stButton > button {
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #c9d1d9;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+}
+.stButton > button:hover {
+    background: #30363d;
+    border-color: #58a6ff;
+    color: #58a6ff;
+}
+
+/* ── Divider ── */
+hr { border-color: #21262d; margin: 1.25rem 0; }
+
+/* ── Dataframe ── */
+.stDataFrame { border: 1px solid #21262d; border-radius: 8px; }
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] { background: transparent; gap: 4px; }
+.stTabs [data-baseweb="tab"] {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    color: #8b949e;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 6px 14px;
+}
+.stTabs [aria-selected="true"] {
+    background: #1f6feb;
+    border-color: #1f6feb;
+    color: #ffffff;
+}
+
+/* ── Selectbox / inputs ── */
+.stSelectbox > div, .stTextInput > div > div > input {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+}
+
+/* ── Success / Info alerts ── */
+.stAlert { border-radius: 8px; }
 </style>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -847,28 +988,28 @@ div[data-testid="stNumberInput"] > div > input { font-size: 14px; }
 # ─────────────────────────────────────────────────────────────────────────────
 init_db()
 if not is_bootstrapped():
-    with st.spinner("⚙️ Importando datos del Excel… primer arranque"):
+    with st.spinner("Importando datos históricos — primer arranque…"):
         conn = get_conn()
         bootstrap(conn)
         conn.close()
-    st.success("✅ Bootstrap completado. Datos importados desde Mesociclo_Neil.xlsx")
+    st.success("Bootstrap completado. Datos importados correctamente.")
     st.rerun()
 
 with st.sidebar:
-    st.markdown("## 🏋️ Centro de Mando")
+    st.markdown("## TRAINING HUB")
     current_mc = get_current_mc()
     st.markdown(f"**Microciclo activo:** `{current_mc}`")
     st.markdown("---")
     PAGES = {
-        "🏠 Dashboard":     "dashboard",
-        "DAY 1 · DOM Pierna": "day1",
-        "DAY 2 · LUN Espalda": "day2",
-        "DAY 3 · MAR Pecho": "day3",
-        "DAY 4 · MIÉ Pierna+": "day4",
-        "DAY 5 · JUE Espalda+": "day5",
-        "DAY 6 · VIE Hombro": "day6",
-        "📊 Progresión":    "progress",
-        "⚙️ Configuración": "settings",
+        "Dashboard":           "dashboard",
+        "Day 1 — DOM · Pierna": "day1",
+        "Day 2 — LUN · Espalda": "day2",
+        "Day 3 — MAR · Pecho": "day3",
+        "Day 4 — MIE · Pierna+": "day4",
+        "Day 5 — JUE · Espalda+": "day5",
+        "Day 6 — VIE · Hombro": "day6",
+        "Progresion":          "progress",
+        "Configuracion":       "settings",
     }
     if "page" not in st.session_state:
         st.session_state.page = "dashboard"

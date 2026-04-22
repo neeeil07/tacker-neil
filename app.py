@@ -906,11 +906,26 @@ def page_day(day):
     current_mc = get_current_mc()
     st.title(f"Day {day} — {abbr}  ·  {descr}")
 
-    # Tonelaje sesión
     exercises = get_exercises(day)
     session_ton = sum(calc_tonelaje(e["id"], current_mc) for e in exercises)
-    st.metric("Tonelaje total de la sesión", f"{session_ton:,.0f} kg")
-    st.caption(f"Microciclo activo: **{current_mc}**")
+    prev_mc = get_prev_mc(current_mc)
+    prev_ton = sum(calc_tonelaje(e["id"], prev_mc) for e in exercises) if prev_mc else 0
+    delta_ton = session_ton - prev_ton
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Tonelaje total", f"{session_ton:,.0f} kg",
+              f"{delta_ton:+,.0f} kg vs {prev_mc}" if prev_mc else None)
+    m2.metric("Ejercicios", f"{len(exercises)}")
+    m2.caption(f"Microciclo: **{current_mc}**")
+
+    # Session note
+    existing_note = get_session_note(day, current_mc)
+    note_val = m3.text_input("Nota de sesion", value=existing_note,
+                             key=f"snote_{day}_{current_mc}",
+                             placeholder="Como fue el entreno...")
+    if note_val != existing_note:
+        save_session_note(day, current_mc, note_val)
+
     st.markdown("---")
 
     for ex in exercises:
@@ -927,106 +942,185 @@ def page_day(day):
 
 
 def page_progress():
-    st.title("Progresión de Tonelaje")
+    st.title("Progresion de Tonelaje y Fuerza")
     current_mc = get_current_mc()
     all_mcs = ["MC01","MC02","MC03","MC04","MC05","MC06","MC07","MC08"]
+    dark_layout = dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#c9d1d9"),
+        xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d"),
+        legend=dict(bgcolor="rgba(0,0,0,0)")
+    )
 
     # ── Tonelaje total por día y por MC ──
-    st.subheader("Tonelaje total por Día y Microciclo")
+    st.subheader("Tonelaje total por Dia y Microciclo")
     rows = []
     for d in range(1, 7):
         ton_by_mc = get_day_tonelaje_by_mc(d)
         for mc in all_mcs:
-            rows.append({"Día": f"DAY {d}", "MC": mc, "Tonelaje": ton_by_mc.get(mc, 0)})
+            rows.append({"Dia": f"Day {d}", "MC": mc, "Tonelaje": ton_by_mc.get(mc, 0)})
     df = pd.DataFrame(rows)
     df_nonzero = df[df["Tonelaje"] > 0]
     if not df_nonzero.empty:
-        fig = px.bar(df_nonzero, x="MC", y="Tonelaje", color="Día", barmode="group",
+        fig = px.bar(df_nonzero, x="MC", y="Tonelaje", color="Dia", barmode="group",
                      color_discrete_sequence=px.colors.qualitative.Bold)
-        fig.update_layout(height=380, margin=dict(t=10,b=20,l=20,r=10))
+        fig.update_layout(height=380, margin=dict(t=10,b=20,l=20,r=10), **dark_layout)
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Progresión por ejercicio ──
-    st.subheader("Progresión por ejercicio")
-    tab_labels = [f"DAY {d}" for d in range(1,7)]
+    # ── Progresión por ejercicio + 1RM + RIR ──
+    st.subheader("Progresion y Fuerza por ejercicio")
+    tab_labels = [f"Day {d}" for d in range(1,7)]
     tabs = st.tabs(tab_labels)
 
     for ti, day in enumerate(range(1,7)):
         with tabs[ti]:
             conn = get_conn()
             exs = conn.execute(
-                "SELECT DISTINCT name FROM exercises WHERE day=? AND active=1", (day,)
+                "SELECT id, name FROM exercises WHERE day=? AND active=1", (day,)
             ).fetchall()
             conn.close()
             if not exs:
                 st.info("Sin datos.")
                 continue
-            ex_names = [e["name"] for e in exs]
-            sel = st.selectbox("Ejercicio", ex_names, key=f"prog_sel_{day}")
-            hist = get_tonelaje_history(day, sel)
-            if hist:
-                mcs_sorted = sorted(hist.keys())
-                vals = [hist[m] for m in mcs_sorted]
-                colors = ["#3498db" if m <= "MC04" else "#e74c3c" for m in mcs_sorted]
-                fig2 = go.Figure(go.Bar(x=mcs_sorted, y=vals, marker_color=colors,
-                                        text=[f"{v:,.0f}" for v in vals],
-                                        textposition="outside"))
-                fig2.add_shape(type="line", x0=-0.5, x1=3.5, y0=0, y1=0,
-                               line=dict(color="#3498db", dash="dot"))
-                fig2.update_layout(
-                    title=f"Tonelaje · {sel}",
-                    yaxis_title="Reps × Kg",
-                    height=350,
-                    margin=dict(t=40,b=20,l=20,r=10),
-                    annotations=[dict(x=3.5, y=max(vals)*0.95,
-                                      text="← Histórico  |  Nuevos →",
-                                      showarrow=False, font=dict(size=10, color="#888"))]
-                )
-                st.plotly_chart(fig2, use_container_width=True)
-            else:
-                st.info("Sin datos para este ejercicio aún.")
+            ex_map = {e["name"]: e["id"] for e in exs}
+            sel = st.selectbox("Ejercicio", list(ex_map.keys()), key=f"prog_sel_{day}")
+            ex_id = ex_map[sel]
 
-    # ── Evolución peso corporal ──
-    st.subheader("Evolución del peso corporal y BF%")
+            col_ton, col_1rm = st.columns(2)
+
+            # Tonelaje bar chart
+            hist = get_tonelaje_history(day, sel)
+            with col_ton:
+                if hist:
+                    mcs_sorted = sorted(hist.keys())
+                    vals = [hist[m] for m in mcs_sorted]
+                    colors = ["#1f6feb" if m <= "MC04" else "#e74c3c" for m in mcs_sorted]
+                    fig2 = go.Figure(go.Bar(
+                        x=mcs_sorted, y=vals, marker_color=colors,
+                        text=[f"{v:,.0f}" for v in vals], textposition="outside"
+                    ))
+                    fig2.update_layout(
+                        title="Tonelaje por MC", yaxis_title="Reps x Kg",
+                        height=300, margin=dict(t=40,b=20,l=20,r=10), **dark_layout
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.info("Sin datos de tonelaje.")
+
+            # 1RM estimated per MC
+            with col_1rm:
+                conn = get_conn()
+                rm_rows = conn.execute("""
+                    SELECT ws.microcycle, ws.reps, ws.kg, ws.rir
+                    FROM workout_sets ws
+                    WHERE ws.exercise_id=? AND ws.reps>0 AND ws.kg>0
+                    ORDER BY ws.microcycle, ws.set_num
+                """, (ex_id,)).fetchall()
+                conn.close()
+                rm_by_mc = {}
+                for r in rm_rows:
+                    mc = r["microcycle"]
+                    v  = estimate_1rm(r["reps"], r["kg"], r["rir"])
+                    if mc not in rm_by_mc or v > rm_by_mc[mc]:
+                        rm_by_mc[mc] = v
+                if rm_by_mc:
+                    mc_list = sorted(rm_by_mc.keys())
+                    fig_rm = go.Figure(go.Scatter(
+                        x=mc_list, y=[rm_by_mc[m] for m in mc_list],
+                        mode="lines+markers+text",
+                        text=[f"{rm_by_mc[m]:.1f}" for m in mc_list],
+                        textposition="top center",
+                        line=dict(color="#f39c12", width=2),
+                        marker=dict(size=8)
+                    ))
+                    fig_rm.update_layout(
+                        title="1RM Estimado (Epley)", yaxis_title="kg",
+                        height=300, margin=dict(t=40,b=20,l=20,r=10), **dark_layout
+                    )
+                    st.plotly_chart(fig_rm, use_container_width=True)
+                else:
+                    st.info("Sin datos para 1RM.")
+
+            # RIR trend
+            rir_data = get_rir_trend(ex_id)
+            if len(rir_data) >= 2:
+                mcs_r, vals_r = zip(*rir_data)
+                fig_rir = go.Figure(go.Scatter(
+                    x=mcs_r, y=vals_r, mode="lines+markers",
+                    line=dict(color="#27ae60", width=2), marker=dict(size=7),
+                    fill="tozeroy", fillcolor="rgba(39,174,96,0.1)"
+                ))
+                fig_rir.add_hline(y=1, line_dash="dash", line_color="#f39c12",
+                                  annotation_text="RIR objetivo")
+                fig_rir.update_layout(
+                    title="Tendencia RIR promedio", yaxis_title="RIR",
+                    height=220, margin=dict(t=40,b=20,l=20,r=10), **dark_layout
+                )
+                st.plotly_chart(fig_rir, use_container_width=True)
+
+    # ── Biometrics: Peso + BF% + Pasos + Sueño ──
+    st.subheader("Biometricos — Evolucion completa")
     conn = get_conn()
     bm = pd.DataFrame([dict(r) for r in conn.execute(
-        "SELECT metric_date,weight,bf_pct FROM body_metrics WHERE weight IS NOT NULL ORDER BY metric_date"
+        "SELECT metric_date,weight,bf_pct,steps,sleep FROM body_metrics ORDER BY metric_date"
     ).fetchall()])
     conn.close()
     if not bm.empty:
-        fig3 = go.Figure()
-        fig3.add_trace(go.Scatter(x=bm["metric_date"], y=bm["weight"],
-                                  mode="lines+markers", name="Peso (kg)",
-                                  line=dict(color="#2980b9")))
-        fig3.add_trace(go.Scatter(x=bm["metric_date"], y=bm["bf_pct"],
-                                  mode="lines+markers", name="BF%",
-                                  yaxis="y2", line=dict(color="#e74c3c", dash="dot")))
-        fig3.update_layout(
-            yaxis=dict(title="Peso (kg)"),
-            yaxis2=dict(title="BF%", overlaying="y", side="right"),
-            height=320, margin=dict(t=10,b=20,l=20,r=60),
-        )
-        st.plotly_chart(fig3, use_container_width=True)
+        c_body, c_habits = st.columns(2)
+        with c_body:
+            fig3 = go.Figure()
+            fig3.add_trace(go.Scatter(x=bm["metric_date"], y=bm["weight"],
+                                      mode="lines+markers", name="Peso (kg)",
+                                      line=dict(color="#2980b9")))
+            fig3.add_trace(go.Scatter(x=bm["metric_date"], y=bm["bf_pct"],
+                                      mode="lines+markers", name="BF%",
+                                      yaxis="y2", line=dict(color="#e74c3c", dash="dot")))
+            fig3.update_layout(
+                yaxis=dict(title="Peso (kg)", gridcolor="#21262d"),
+                yaxis2=dict(title="BF%", overlaying="y", side="right"),
+                height=300, margin=dict(t=10,b=20,l=20,r=60),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#c9d1d9"), legend=dict(bgcolor="rgba(0,0,0,0)")
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+        with c_habits:
+            bm_hab = bm.dropna(subset=["steps","sleep"], how="all")
+            if not bm_hab.empty:
+                fig4 = go.Figure()
+                fig4.add_trace(go.Bar(x=bm_hab["metric_date"], y=bm_hab["steps"],
+                                      name="Pasos", marker_color="#1f6feb", yaxis="y"))
+                fig4.add_trace(go.Scatter(x=bm_hab["metric_date"], y=bm_hab["sleep"],
+                                          name="Sueno (h)", mode="lines+markers",
+                                          line=dict(color="#8e44ad"), yaxis="y2"))
+                fig4.update_layout(
+                    yaxis=dict(title="Pasos", gridcolor="#21262d"),
+                    yaxis2=dict(title="h sueno", overlaying="y", side="right"),
+                    height=300, margin=dict(t=10,b=20,l=20,r=60),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#c9d1d9"), legend=dict(bgcolor="rgba(0,0,0,0)")
+                )
+                st.plotly_chart(fig4, use_container_width=True)
 
 
 def page_settings():
-    st.title("Configuración")
+    st.title("Configuracion")
     current_mc = get_current_mc()
     all_mcs = [f"MC{i:02d}" for i in range(1,9)]
-    new_mc = st.selectbox("Microciclo activo", all_mcs, index=all_mcs.index(current_mc) if current_mc in all_mcs else 4)
+    new_mc = st.selectbox("Microciclo activo", all_mcs,
+                          index=all_mcs.index(current_mc) if current_mc in all_mcs else 4)
     if new_mc != current_mc:
         set_current_mc(new_mc)
         st.success(f"Microciclo cambiado a {new_mc}")
         st.rerun()
 
     st.markdown("---")
-    st.subheader("Registro de métricas corporales")
+    st.subheader("Registro de metricas corporales")
     with st.form("body_form"):
         col1, col2, col3, col4 = st.columns(4)
         b_date  = col1.date_input("Fecha", value=date.today())
         b_w     = col2.number_input("Peso (kg)", min_value=0.0, step=0.1)
         b_steps = col3.number_input("Pasos", min_value=0, step=500)
-        b_sleep = col4.number_input("Sueño (h)", min_value=0.0, step=0.25)
+        b_sleep = col4.number_input("Sueno (h)", min_value=0.0, step=0.25)
         b_notes = st.text_input("Notas")
         if st.form_submit_button("Guardar"):
             conn = get_conn()
@@ -1034,10 +1128,10 @@ def page_settings():
                             VALUES(?,?,?,?,?)""",
                          (str(b_date), b_w, b_steps, b_sleep, b_notes))
             conn.commit(); conn.close()
-            st.success("Guardado.")
+            st.success("Guardado correctamente.")
 
     st.markdown("---")
-    st.subheader("Historial de métricas corporales")
+    st.subheader("Historial de metricas corporales")
     conn = get_conn()
     bm = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT metric_date,weight,steps,sleep,bf_pct,notes FROM body_metrics ORDER BY metric_date DESC LIMIT 14"
@@ -1046,8 +1140,52 @@ def page_settings():
     if not bm.empty:
         st.dataframe(bm, use_container_width=True)
 
+    # ── Deload warning ──
     st.markdown("---")
-    if st.button("Re-ejecutar bootstrap (resetea ejercicios históricos)"):
+    st.subheader("Analisis de fatiga acumulada")
+    conn = get_conn()
+    exs_all = conn.execute("SELECT id FROM exercises WHERE active=1").fetchall()
+    low_rir_count = sum(
+        1 for e in exs_all
+        if (get_avg_rir(e["id"], current_mc) or 99) <= 0.5
+    )
+    conn.close()
+    total_ex = len(exs_all) or 1
+    fatigue_pct = low_rir_count / total_ex
+    if fatigue_pct >= 0.4:
+        st.error(
+            f"{low_rir_count} de {total_ex} ejercicios tienen RIR promedio <= 0.5 en {current_mc}. "
+            "Considera programar una semana de descarga en el proximo microciclo."
+        )
+    elif fatigue_pct >= 0.2:
+        st.warning(
+            f"{low_rir_count} ejercicios con RIR bajo en {current_mc}. "
+            "Monitoriza la fatiga acumulada."
+        )
+    else:
+        st.success(f"Fatiga bajo control en {current_mc}. RIR general adecuado.")
+
+    # ── Export CSV ──
+    st.markdown("---")
+    st.subheader("Exportar datos")
+    if st.button("Generar exportacion CSV"):
+        import io, zipfile
+        sets_df, macros_df, metrics_df = export_all_csv()
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("entrenos.csv", sets_df.to_csv(index=False))
+            zf.writestr("macros.csv",   macros_df.to_csv(index=False))
+            zf.writestr("metricas.csv", metrics_df.to_csv(index=False))
+        zip_buf.seek(0)
+        st.download_button(
+            label="Descargar ZIP con todos los datos",
+            data=zip_buf,
+            file_name=f"training_export_{date.today()}.zip",
+            mime="application/zip"
+        )
+
+    st.markdown("---")
+    if st.button("Re-ejecutar bootstrap (resetea ejercicios historicos)"):
         conn = get_conn()
         conn.execute("DELETE FROM app_config WHERE key='bootstrapped'")
         conn.commit()

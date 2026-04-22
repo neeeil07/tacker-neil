@@ -706,7 +706,7 @@ def render_exercise_block(ex, current_mc):
         for h, c in zip(["**RIR**", "**Reps**", "**Kg**", "**Ton.**", ""], cols):
             c.markdown(h)
 
-        existing = {s["set_num"]: s for s in sets}
+        existing = {s["set_num"]: dict(s) for s in sets}
         n_sets   = max(len(sets), 3)
 
         for sn in range(1, n_sets + 1):
@@ -737,7 +737,11 @@ def render_exercise_block(ex, current_mc):
                     delete_set(ex_id, current_mc, sn)
                     st.session_state[del_key] = False
                     st.rerun()
-            if reps > 0 and kg > 0:
+            if reps > 0 and kg > 0 and sn in existing:
+                old = existing[sn]
+                if old["reps"] != reps or old["kg"] != kg or old["rir"] != rir:
+                    upsert_set(ex_id, current_mc, sn, reps, kg, rir)
+            elif reps > 0 and kg > 0 and sn not in existing:
                 upsert_set(ex_id, current_mc, sn, reps, kg, rir)
 
         st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
@@ -844,19 +848,23 @@ def page_dashboard():
 
     # ── Registrar macros hoy ──
     with st.expander("Registrar lo que has comido hoy", expanded=not bool(today_row)):
+        if today_row:
+            st.caption(f"Ultimo registro: {cur['kcal']:.0f} kcal · {cur['protein']:.0f}g proteina · {cur['carbs']:.0f}g carbos · {cur['fat']:.0f}g grasa")
         with st.form("macro_form"):
             col_a, col_b, col_c, col_d = st.columns(4)
-            kcal    = col_a.number_input("Kcal",        value=float(cur["kcal"]),    step=10.0)
-            protein = col_b.number_input("Proteina (g)", value=float(cur["protein"]), step=1.0)
-            carbs   = col_c.number_input("Carbos (g)",  value=float(cur["carbs"]),   step=1.0)
-            fat     = col_d.number_input("Grasa (g)",   value=float(cur["fat"]),     step=0.5)
+            kcal    = col_a.number_input("Kcal",        value=float(cur["kcal"]),    step=10.0, min_value=0.0)
+            protein = col_b.number_input("Proteina (g)", value=float(cur["protein"]), step=1.0,  min_value=0.0)
+            carbs   = col_c.number_input("Carbos (g)",  value=float(cur["carbs"]),   step=1.0,  min_value=0.0)
+            fat     = col_d.number_input("Grasa (g)",   value=float(cur["fat"]),     step=0.5,  min_value=0.0)
             notes   = st.text_input("Notas", value=today_row["notes"] if today_row else "")
-            if st.form_submit_button("Guardar"):
+            submitted = st.form_submit_button("Guardar", type="primary")
+            if submitted:
                 conn = get_conn()
                 conn.execute("""INSERT OR REPLACE INTO macros_log(log_date,kcal,protein,carbs,fat,notes)
                                 VALUES(?,?,?,?,?,?)""", (today_str, kcal, protein, carbs, fat, notes))
                 conn.commit(); conn.close()
-                st.success("Guardado correctamente."); st.rerun()
+                st.success(f"Guardado: {kcal:.0f} kcal · {protein:.0f}g proteina · {carbs:.0f}g carbos · {fat:.0f}g grasa")
+                st.rerun()
 
     col_left, col_right = st.columns([1, 1])
 
@@ -1163,20 +1171,36 @@ def page_settings():
 
     st.markdown("---")
     st.subheader("Peso, pasos y sueno")
+
+    # Pre-fill with existing data for selected date
+    b_date = st.date_input("Fecha", value=date.today(), key="body_date_sel")
+    conn = get_conn()
+    existing_bm = conn.execute(
+        "SELECT * FROM body_metrics WHERE metric_date=?", (str(b_date),)
+    ).fetchone()
+    conn.close()
+    existing_bm = dict(existing_bm) if existing_bm else {}
+
+    if existing_bm:
+        st.caption(f"Ya tienes datos para esta fecha: {existing_bm.get('weight', 0)} kg · {int(existing_bm.get('steps') or 0)} pasos · {existing_bm.get('sleep', 0)}h sueno")
+
     with st.form("body_form"):
-        col1, col2, col3, col4 = st.columns(4)
-        b_date  = col1.date_input("Fecha", value=date.today())
-        b_w     = col2.number_input("Peso (kg)", min_value=0.0, step=0.1)
-        b_steps = col3.number_input("Pasos", min_value=0, step=500)
-        b_sleep = col4.number_input("Sueno (h)", min_value=0.0, step=0.25)
-        b_notes = st.text_input("Notas")
-        if st.form_submit_button("Guardar"):
+        col2, col3, col4 = st.columns(3)
+        b_w     = col2.number_input("Peso (kg)",  value=float(existing_bm.get("weight") or 0), min_value=0.0, step=0.1)
+        b_steps = col3.number_input("Pasos",       value=int(existing_bm.get("steps") or 0),   min_value=0,   step=500)
+        b_sleep = col4.number_input("Sueno (h)",   value=float(existing_bm.get("sleep") or 0), min_value=0.0, step=0.25)
+        b_notes = st.text_input("Notas", value=existing_bm.get("notes") or "")
+        submitted_bm = st.form_submit_button("Guardar", type="primary")
+        if submitted_bm:
             conn = get_conn()
             conn.execute("""INSERT OR REPLACE INTO body_metrics(metric_date,weight,steps,sleep,notes)
                             VALUES(?,?,?,?,?)""",
-                         (str(b_date), b_w, b_steps, b_sleep, b_notes))
+                         (str(b_date), b_w if b_w > 0 else None,
+                          b_steps if b_steps > 0 else None,
+                          b_sleep if b_sleep > 0 else None, b_notes))
             conn.commit(); conn.close()
-            st.success("Guardado correctamente.")
+            st.success(f"Guardado para {b_date}: {b_w} kg · {b_steps} pasos · {b_sleep}h")
+            st.rerun()
 
     st.markdown("---")
     st.subheader("Ultimas entradas")
@@ -1216,7 +1240,7 @@ def page_settings():
     st.markdown("---")
     st.subheader("Descargar todos tus datos")
     st.caption("Genera un ZIP con tres archivos CSV: series de entreno, macros y metricas corporales.")
-    if st.button("Preparar exportacion"):
+    if st.button("Preparar exportacion", key="btn_export"):
         import io, zipfile
         sets_df, macros_df, metrics_df = export_all_csv()
         zip_buf = io.BytesIO()
@@ -1224,12 +1248,14 @@ def page_settings():
             zf.writestr("entrenos.csv", sets_df.to_csv(index=False))
             zf.writestr("macros.csv",   macros_df.to_csv(index=False))
             zf.writestr("metricas.csv", metrics_df.to_csv(index=False))
-        zip_buf.seek(0)
+        st.session_state["export_zip"] = zip_buf.getvalue()
+    if "export_zip" in st.session_state:
         st.download_button(
             label="Descargar ZIP con todos los datos",
-            data=zip_buf,
+            data=st.session_state["export_zip"],
             file_name=f"training_export_{date.today()}.zip",
-            mime="application/zip"
+            mime="application/zip",
+            key="btn_download_zip"
         )
 
     st.markdown("---")

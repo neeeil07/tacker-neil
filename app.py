@@ -539,6 +539,105 @@ def get_day_tonelaje_by_mc(day):
     conn.close()
     return {r["microcycle"]: r["tonelaje"] for r in rows}
 
+def get_prev_mc(current_mc):
+    num = int(current_mc[2:])
+    return f"MC{(num-1):02d}" if num > 1 else None
+
+def get_avg_rir(exercise_id, mc):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT AVG(rir) as avg_rir FROM workout_sets WHERE exercise_id=? AND microcycle=? AND reps>0",
+        (exercise_id, mc)
+    ).fetchone()
+    conn.close()
+    return row["avg_rir"] if row and row["avg_rir"] is not None else None
+
+def estimate_1rm(reps, kg, rir=0):
+    effective = reps + rir
+    if effective <= 0 or kg <= 0:
+        return 0.0
+    return round(kg * (1 + effective / 30), 1)
+
+def get_best_set(exercise_id, mc):
+    """Returns the set with highest estimated 1RM for a given exercise/mc."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT reps, kg, rir FROM workout_sets WHERE exercise_id=? AND microcycle=? AND reps>0 AND kg>0",
+        (exercise_id, mc)
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return None
+    best = max(rows, key=lambda r: estimate_1rm(r["reps"], r["kg"], r["rir"]))
+    return dict(best)
+
+def get_streak():
+    conn = get_conn()
+    rows = conn.execute("SELECT log_date FROM macros_log ORDER BY log_date DESC").fetchall()
+    conn.close()
+    if not rows:
+        return 0
+    today = date.today()
+    streak = 0
+    for row in rows:
+        d = date.fromisoformat(row["log_date"])
+        if d == today - timedelta(days=streak):
+            streak += 1
+        else:
+            break
+    return streak
+
+def get_weekly_compliance(days=7):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT kcal, protein FROM macros_log ORDER BY log_date DESC LIMIT ?", (days,)
+    ).fetchall()
+    conn.close()
+    total = len(rows)
+    kcal_ok = sum(1 for r in rows if r["kcal"] >= MACROS_TARGET["kcal"] * 0.9)
+    prot_ok = sum(1 for r in rows if r["protein"] >= MACROS_TARGET["protein"] * 0.9)
+    return {"total": total, "kcal_ok": kcal_ok, "prot_ok": prot_ok}
+
+def get_rir_trend(exercise_id):
+    """Returns list of (mc, avg_rir) sorted by microcycle."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT microcycle, AVG(rir) as avg_rir
+        FROM workout_sets WHERE exercise_id=? AND reps>0
+        GROUP BY microcycle ORDER BY microcycle
+    """, (exercise_id,)).fetchall()
+    conn.close()
+    return [(r["microcycle"], r["avg_rir"]) for r in rows]
+
+def get_session_note(day, mc):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT value FROM app_config WHERE key=?", (f"note_day{day}_{mc}",)
+    ).fetchone()
+    conn.close()
+    return row["value"] if row else ""
+
+def save_session_note(day, mc, note):
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO app_config(key,value) VALUES(?,?)",
+                 (f"note_day{day}_{mc}", note))
+    conn.commit()
+    conn.close()
+
+def export_all_csv():
+    """Returns a dict of DataFrames for CSV export."""
+    conn = get_conn()
+    sets_df = pd.read_sql_query("""
+        SELECT e.day, e.name as ejercicio, ws.microcycle, ws.set_num,
+               ws.reps, ws.kg, ws.rir, ROUND(ws.reps*ws.kg,1) as tonelaje_set
+        FROM workout_sets ws JOIN exercises e ON ws.exercise_id=e.id
+        ORDER BY e.day, ws.microcycle, ws.set_num
+    """, conn)
+    macros_df = pd.read_sql_query("SELECT * FROM macros_log ORDER BY log_date", conn)
+    metrics_df = pd.read_sql_query("SELECT * FROM body_metrics ORDER BY metric_date", conn)
+    conn.close()
+    return sets_df, macros_df, metrics_df
+
 # ─────────────────────────────────────────────────────────────────────────────
 # UI COMPONENTS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -559,40 +658,107 @@ def macro_bar(label, current, target, color):
 
 
 def render_exercise_block(ex, current_mc):
-    ex_id = ex["id"]
+    ex_id  = ex["id"]
     ex_name = ex["name"]
-    sets = get_sets(ex_id, current_mc)
+    sets    = get_sets(ex_id, current_mc)
     tonelaje = calc_tonelaje(ex_id, current_mc)
+    prev_mc = get_prev_mc(current_mc)
+    avg_rir = get_avg_rir(ex_id, current_mc)
+    best    = get_best_set(ex_id, current_mc)
+    e1rm    = estimate_1rm(best["reps"], best["kg"], best["rir"]) if best else 0
 
-    with st.expander(f"**{ex_name}** — {ex['reps_obj']}  |  Tonelaje: **{tonelaje:,.0f} kg**"):
-        cols = st.columns([0.3, 0.3, 0.2, 0.2, 0.1])
-        cols[0].markdown("**RIR**"); cols[1].markdown("**Reps**")
-        cols[2].markdown("**Kg**"); cols[3].markdown("**Ton.**"); cols[4].markdown("**—**")
+    # RIR color badge
+    if avg_rir is None:
+        rir_badge = "<span style='color:#8b949e'>RIR —</span>"
+    elif avg_rir <= 0.5:
+        rir_badge = f"<span style='color:#e74c3c;font-weight:600'>RIR {avg_rir:.1f} ⚠ Fatiga</span>"
+    elif avg_rir <= 1.5:
+        rir_badge = f"<span style='color:#f39c12;font-weight:600'>RIR {avg_rir:.1f}</span>"
+    else:
+        rir_badge = f"<span style='color:#27ae60;font-weight:600'>RIR {avg_rir:.1f}</span>"
+
+    label = (f"**{ex_name}** — {ex['reps_obj']}  |  "
+             f"Ton: **{tonelaje:,.0f} kg**  |  1RM est: **{e1rm} kg**")
+
+    with st.expander(label):
+        # ── Inline prev MC comparison ──
+        if prev_mc:
+            prev_sets = get_sets(ex_id, prev_mc)
+            prev_ton  = calc_tonelaje(ex_id, prev_mc)
+            if prev_sets:
+                delta_ton = tonelaje - prev_ton
+                delta_color = "#27ae60" if delta_ton >= 0 else "#e74c3c"
+                delta_sign  = "+" if delta_ton >= 0 else ""
+                st.markdown(
+                    f"<div style='background:#0d1117;border:1px solid #21262d;border-radius:6px;"
+                    f"padding:8px 12px;margin-bottom:10px;font-size:0.82rem;color:#8b949e'>"
+                    f"<b style='color:#c9d1d9'>{prev_mc}</b> &nbsp;·&nbsp; Tonelaje: {prev_ton:,.0f} kg"
+                    f"&nbsp;&nbsp;<span style='color:{delta_color}'>{delta_sign}{delta_ton:,.0f} kg vs ahora</span>"
+                    f"&nbsp;&nbsp;|&nbsp;&nbsp;{rir_badge}</div>",
+                    unsafe_allow_html=True
+                )
+
+        # ── Set table header ──
+        cols = st.columns([0.25, 0.25, 0.2, 0.2, 0.1])
+        for h, c in zip(["**RIR**", "**Reps**", "**Kg**", "**Ton.**", ""], cols):
+            c.markdown(h)
 
         existing = {s["set_num"]: s for s in sets}
-        n_sets = max(len(sets), 3)
+        n_sets   = max(len(sets), 3)
 
         for sn in range(1, n_sets + 1):
             s = existing.get(sn, {})
-            c0, c1, c2, c3, c4 = st.columns([0.3, 0.3, 0.2, 0.2, 0.1])
-            key = f"{ex_id}_{current_mc}_{sn}"
-            rir  = c0.number_input("", value=float(s.get("rir",1)), min_value=0.0, max_value=5.0, step=0.5, key=f"rir_{key}", label_visibility="collapsed")
-            reps = c1.number_input("", value=float(s.get("reps",0)), min_value=0.0, step=1.0,  key=f"reps_{key}", label_visibility="collapsed")
-            kg   = c2.number_input("", value=float(s.get("kg",0)),  min_value=0.0, step=2.5,  key=f"kg_{key}",   label_visibility="collapsed")
-            c3.markdown(f"<div style='padding-top:8px'>{reps*kg:,.0f}</div>", unsafe_allow_html=True)
-            if c4.button("X", key=f"del_{key}") and sn in existing:
-                delete_set(ex_id, current_mc, sn)
-                st.rerun()
+            c0, c1, c2, c3, c4 = st.columns([0.25, 0.25, 0.2, 0.2, 0.1])
+            key  = f"{ex_id}_{current_mc}_{sn}"
+            rir  = c0.number_input("", value=float(s.get("rir", 1)), min_value=0.0,
+                                   max_value=5.0, step=0.5, key=f"rir_{key}",
+                                   label_visibility="collapsed")
+            reps = c1.number_input("", value=float(s.get("reps", 0)), min_value=0.0,
+                                   step=1.0, key=f"reps_{key}",
+                                   label_visibility="collapsed")
+            kg   = c2.number_input("", value=float(s.get("kg", 0)), min_value=0.0,
+                                   step=2.5, key=f"kg_{key}",
+                                   label_visibility="collapsed")
+            c3.markdown(f"<div style='padding-top:8px'>{reps*kg:,.0f}</div>",
+                        unsafe_allow_html=True)
+            # Confirmation-safe delete
+            del_key = f"del_confirm_{key}"
+            if del_key not in st.session_state:
+                st.session_state[del_key] = False
+            if not st.session_state[del_key]:
+                if c4.button("✕", key=f"del_{key}") and sn in existing:
+                    st.session_state[del_key] = True
+                    st.rerun()
+            else:
+                if c4.button("OK", key=f"conf_{key}"):
+                    delete_set(ex_id, current_mc, sn)
+                    st.session_state[del_key] = False
+                    st.rerun()
             if reps > 0 and kg > 0:
                 upsert_set(ex_id, current_mc, sn, reps, kg, rir)
 
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
         c_add, c_del_ex = st.columns(2)
         if c_add.button("+ Añadir serie", key=f"add_set_{ex_id}_{current_mc}"):
             upsert_set(ex_id, current_mc, n_sets + 1, 0, 0, 1)
             st.rerun()
-        if c_del_ex.button("Quitar ejercicio", key=f"del_ex_{ex_id}"):
-            deactivate_exercise(ex_id)
-            st.rerun()
+        del_ex_key = f"del_ex_confirm_{ex_id}"
+        if del_ex_key not in st.session_state:
+            st.session_state[del_ex_key] = False
+        if not st.session_state[del_ex_key]:
+            if c_del_ex.button("Quitar ejercicio", key=f"del_ex_{ex_id}"):
+                st.session_state[del_ex_key] = True
+                st.rerun()
+        else:
+            c_del_ex.warning("Confirmar eliminacion")
+            cc1, cc2 = st.columns(2)
+            if cc1.button("Si, quitar", key=f"conf_ex_yes_{ex_id}"):
+                deactivate_exercise(ex_id)
+                st.session_state[del_ex_key] = False
+                st.rerun()
+            if cc2.button("Cancelar", key=f"conf_ex_no_{ex_id}"):
+                st.session_state[del_ex_key] = False
+                st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGES
@@ -601,7 +767,21 @@ def page_dashboard():
     st.title("Centro de Mando")
     current_mc = get_current_mc()
 
-    # ── Macro KPIs ──
+    # ── Streak + Compliance summary row ──
+    streak = get_streak()
+    compliance = get_weekly_compliance(7)
+    total_days = compliance["total"]
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Racha actual", f"{streak} dias", "Dias consecutivos registrados")
+    s2.metric("Dias registrados (7d)", f"{total_days}/7")
+    kcal_pct = int(compliance["kcal_ok"] / total_days * 100) if total_days else 0
+    prot_pct = int(compliance["prot_ok"] / total_days * 100) if total_days else 0
+    s3.metric("Cumplimiento Kcal", f"{compliance['kcal_ok']}/{total_days} dias", f"{kcal_pct}%")
+    s4.metric("Cumplimiento Proteina", f"{compliance['prot_ok']}/{total_days} dias", f"{prot_pct}%")
+
+    st.markdown("---")
+
+    # ── Macro KPIs hoy ──
     st.subheader("KPIs Nutricionales — Hoy")
     today_str = str(date.today())
     conn = get_conn()
@@ -613,20 +793,35 @@ def page_dashboard():
     def kpi(col, label, val, target, unit):
         delta = val - target
         col.metric(label, f"{val:.0f} {unit}", f"{delta:+.0f} vs objetivo")
-    kpi(k1,"Calorías",cur["kcal"],MACROS_TARGET["kcal"],"kcal")
-    kpi(k2,"Proteína",cur["protein"],MACROS_TARGET["protein"],"g")
-    kpi(k3,"Carbos",cur["carbs"],MACROS_TARGET["carbs"],"g")
-    kpi(k4,"Grasa",cur["fat"],MACROS_TARGET["fat"],"g")
+    kpi(k1,"Calorias", cur["kcal"],   MACROS_TARGET["kcal"],   "kcal")
+    kpi(k2,"Proteina", cur["protein"],MACROS_TARGET["protein"],"g")
+    kpi(k3,"Carbos",   cur["carbs"],  MACROS_TARGET["carbs"],  "g")
+    kpi(k4,"Grasa",    cur["fat"],    MACROS_TARGET["fat"],    "g")
+
+    # ── Nutrition insight banner ──
+    conn = get_conn()
+    last7 = conn.execute(
+        "SELECT protein FROM macros_log ORDER BY log_date DESC LIMIT 7"
+    ).fetchall()
+    conn.close()
+    low_prot_days = sum(1 for r in last7 if r["protein"] < MACROS_TARGET["protein"] * 0.85)
+    if low_prot_days >= 3:
+        st.warning(f"Proteina baja los ultimos {low_prot_days} de 7 dias (< 85% objetivo). Revisa tu ingesta proteica.")
+    elif cur["kcal"] > MACROS_TARGET["kcal"] * 1.15:
+        st.warning(f"Calorias de hoy superan el objetivo en mas de un 15% ({cur['kcal']:.0f} kcal).")
+    elif streak >= 7:
+        st.success(f"Racha de {streak} dias. Excelente consistencia en el seguimiento nutricional.")
 
     st.markdown("---")
+
     # ── Registrar macros hoy ──
     with st.expander("Registrar macros de hoy", expanded=not bool(today_row)):
         with st.form("macro_form"):
             col_a, col_b, col_c, col_d = st.columns(4)
-            kcal    = col_a.number_input("Kcal", value=float(cur["kcal"]), step=10.0)
-            protein = col_b.number_input("Proteína (g)", value=float(cur["protein"]), step=1.0)
-            carbs   = col_c.number_input("Carbos (g)", value=float(cur["carbs"]), step=1.0)
-            fat     = col_d.number_input("Grasa (g)", value=float(cur["fat"]), step=0.5)
+            kcal    = col_a.number_input("Kcal",        value=float(cur["kcal"]),    step=10.0)
+            protein = col_b.number_input("Proteina (g)", value=float(cur["protein"]), step=1.0)
+            carbs   = col_c.number_input("Carbos (g)",  value=float(cur["carbs"]),   step=1.0)
+            fat     = col_d.number_input("Grasa (g)",   value=float(cur["fat"]),     step=0.5)
             notes   = st.text_input("Notas", value=today_row["notes"] if today_row else "")
             if st.form_submit_button("Guardar"):
                 conn = get_conn()
@@ -635,16 +830,36 @@ def page_dashboard():
                 conn.commit(); conn.close()
                 st.success("Guardado correctamente."); st.rerun()
 
-    col_bars, col_weight = st.columns([1, 1])
-    with col_bars:
-        st.subheader("Distribución de macros — Hoy")
-        macro_bar("Calorías", cur["kcal"],    MACROS_TARGET["kcal"],    "#e67e22")
-        macro_bar("Proteína", cur["protein"], MACROS_TARGET["protein"], "#2980b9")
+    col_left, col_right = st.columns([1, 1])
+
+    with col_left:
+        st.subheader("Distribucion de macros — Hoy")
+        macro_bar("Calorias", cur["kcal"],    MACROS_TARGET["kcal"],    "#e67e22")
+        macro_bar("Proteina", cur["protein"], MACROS_TARGET["protein"], "#2980b9")
         macro_bar("Carbos",   cur["carbs"],   MACROS_TARGET["carbs"],   "#27ae60")
         macro_bar("Grasa",    cur["fat"],     MACROS_TARGET["fat"],     "#8e44ad")
 
-    with col_weight:
-        st.subheader("Evolución del peso corporal")
+        # Donut chart
+        if any(cur[k] > 0 for k in ["protein","carbs","fat"]):
+            fig_donut = go.Figure(go.Pie(
+                labels=["Proteina","Carbos","Grasa"],
+                values=[cur["protein"]*4, cur["carbs"]*4, cur["fat"]*9],
+                hole=0.55,
+                marker_colors=["#2980b9","#27ae60","#8e44ad"],
+                textinfo="label+percent",
+                hovertemplate="%{label}: %{value:.0f} kcal<extra></extra>"
+            ))
+            fig_donut.update_layout(
+                height=220, margin=dict(t=10,b=10,l=10,r=10),
+                showlegend=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#c9d1d9")
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
+
+    with col_right:
+        st.subheader("Evolucion del peso corporal")
         conn = get_conn()
         bm = pd.DataFrame([dict(r) for r in conn.execute(
             "SELECT metric_date, weight, bf_pct FROM body_metrics WHERE weight IS NOT NULL ORDER BY metric_date"
@@ -655,12 +870,16 @@ def page_dashboard():
             fig.add_trace(go.Scatter(x=bm["metric_date"], y=bm["weight"],
                                      mode="lines+markers", name="Peso (kg)",
                                      line=dict(color="#2980b9", width=2)))
-            fig.update_layout(height=250, margin=dict(t=10,b=20,l=20,r=10),
-                              xaxis_title=None, yaxis_title="kg")
+            fig.update_layout(
+                height=310, margin=dict(t=10,b=20,l=20,r=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#c9d1d9"),
+                xaxis=dict(gridcolor="#21262d"), yaxis=dict(title="kg", gridcolor="#21262d")
+            )
             st.plotly_chart(fig, use_container_width=True)
 
     # ── Macro trends ──
-    st.subheader("Histórico de macros — Últimas 4 semanas")
+    st.subheader("Historico de macros — Ultimas 4 semanas")
     conn = get_conn()
     ml = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT * FROM macros_log ORDER BY log_date DESC LIMIT 28"
@@ -669,10 +888,16 @@ def page_dashboard():
     if not ml.empty:
         ml = ml.sort_values("log_date")
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=ml["log_date"], y=ml["kcal"], name="Kcal", line=dict(color="#e67e22")))
-        fig2.add_hline(y=MACROS_TARGET["kcal"], line_dash="dash", line_color="#e67e22",
-                       annotation_text="Target Kcal")
-        fig2.update_layout(height=280, margin=dict(t=10,b=20,l=20,r=10))
+        fig2.add_trace(go.Scatter(x=ml["log_date"], y=ml["kcal"],    name="Kcal",    line=dict(color="#e67e22")))
+        fig2.add_trace(go.Scatter(x=ml["log_date"], y=ml["protein"]*4, name="Proteina (kcal)", line=dict(color="#2980b9", dash="dot")))
+        fig2.add_hline(y=MACROS_TARGET["kcal"], line_dash="dash", line_color="#e67e22", annotation_text="Target Kcal")
+        fig2.update_layout(
+            height=280, margin=dict(t=10,b=20,l=20,r=10),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#c9d1d9"),
+            xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d"),
+            legend=dict(bgcolor="rgba(0,0,0,0)")
+        )
         st.plotly_chart(fig2, use_container_width=True)
 
 

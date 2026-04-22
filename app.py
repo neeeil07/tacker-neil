@@ -1,15 +1,399 @@
 """
-app.py  —  Centro de Mando · Neil Mesociclo
-Migración completa desde Mesociclo_Neil.xlsx → Streamlit + SQLite
+app.py  —  Neil Mesociclo · Training Tracker
+Backend: Supabase (PostgreSQL) — datos persistentes en la nube
 """
 
 import streamlit as st
-import sqlite3
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import date, datetime, timedelta
-import os
+from datetime import date, timedelta
+from supabase import create_client
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Training Command Center · Neil", page_icon=None, layout="wide")
+
+MACROS_TARGET = {"kcal": 1850, "protein": 135, "fat": 40, "carbs": 235}
+
+DAY_LABELS = {
+    1: ("DOM", "Pierna + Hombro + Core"),
+    2: ("LUN", "Espalda + Biceps"),
+    3: ("MAR", "Pecho + Hombro + Triceps + Core"),
+    4: ("MIE", "Pierna Compuesta + Core"),
+    5: ("JUE", "Espalda + Biceps + Core"),
+    6: ("VIE", "Hombro + Pecho + Triceps + Core"),
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SUPABASE CLIENT
+# ─────────────────────────────────────────────────────────────────────────────
+@st.cache_resource
+def get_sb():
+    return create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_KEY"]
+    )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BOOTSTRAP DATA
+# ─────────────────────────────────────────────────────────────────────────────
+ROUTINE_DATA = {
+    1: [
+        ("Zancadas con mancuernas", "10-12"),
+        ("Extension de cuadriceps en maquina", "12-15 + DS"),
+        ("Curl femoral tumbado en maquina", "12-15 + DS"),
+        ("Elevaciones laterales con mancuerna", "15-20"),
+        ("Elevaciones laterales en polea baja", "15-20"),
+        ("Elevaciones laterales en polea media", "15-20"),
+        ("Press declinado en maquina Smith", "8-12"),
+        ("Crunch abdominal en polea", "15-20 + Fallo"),
+    ],
+    2: [
+        ("Jalon al pecho agarre neutro", "10-12"),
+        ("Jalon al pecho agarre neutro cerrado", "10-12"),
+        ("Jalon al pecho unilateral", "10-12"),
+        ("Remo en T", "12-15 + RP"),
+        ("Remo Gironda Unilateral", "12-15 + RP"),
+        ("Pull-over con cuerda en polea alta", "12-15"),
+        ("Pajaros para deltoide posterior en maquina", "15-20 + DS"),
+        ("Curl Scott en maquina", "10-12 + Fallo"),
+        ("Rueda abdominal", "10-15 + Fallo"),
+    ],
+    3: [
+        ("Press plano en maquina", "8-12"),
+        ("Press inclinado en multipower", "8-12 + RP"),
+        ("Press declinado en maquina", "10-12"),
+        ("Aperturas en Pec-Deck", "12-15 + DS"),
+        ("Aperturas en polea alta a baja", "12-15"),
+        ("Elevaciones laterales con mancuerna", "15-20"),
+        ("Elevaciones laterales en polea baja", "15-20"),
+        ("Elevaciones laterales en polea media", "15-20"),
+        ("Extension de triceps en polea alta", "12-15 + Fallo"),
+        ("Extensiones Katana en polea", "12-15 + DS"),
+        ("Crunch abdominal en polea", "15-20 + Fallo"),
+    ],
+    4: [
+        ("Peso muerto rumano con mancuernas", "10-12"),
+        ("Prensa de piernas inclinada", "10-12 + Fallo"),
+        ("Extension de cuadriceps en maquina", "12-15 + DS"),
+        ("Curl femoral sentado en maquina", "12-15 + RP"),
+        ("Aductores en maquina", "15-20"),
+        ("Gemelos en prensa", "15-20 + Fallo"),
+        ("Elevaciones de piernas tumbado", "12-15 + Fallo"),
+    ],
+    5: [
+        ("Remo Gironda Unilateral", "12-15"),
+        ("Remo con mancuerna unilateral", "10-12/lado"),
+        ("Remo en T", "10-12"),
+        ("Jalon al pecho con agarre neutro", "10-12 + RP"),
+        ("Curl martillo con mancuernas", "10-12 + DS"),
+        ("Curl Bayesian en polea", "12-15 + Fallo"),
+        ("Plancha abdominal lastrada", "30-60 seg"),
+    ],
+    6: [
+        ("Elevaciones laterales con mancuerna", "15-20"),
+        ("Elevaciones laterales en polea baja", "15-20"),
+        ("Elevaciones laterales en polea media", "15-20"),
+        ("Press inclinado con mancuernas", "8-12"),
+        ("Press plano convergente en maquina", "8-12"),
+        ("Cruces en polea de alta a baja", "12-15"),
+        ("Aperturas en polea baja", "12-15"),
+        ("Fondos en maquina (pecho inferior)", "Al fallo"),
+        ("Fondos de triceps en maquina", "10-12 + Fallo"),
+        ("Extension de triceps a una mano en polea", "12-15"),
+        ("Crunch abdominal en polea", "15-20 + Fallo"),
+    ],
+}
+
+HIST = {
+    1: {
+        "Zancadas con mancuernas": {
+            "MC02":[(1,12,15),(1,12,15),(1,12,15)], "MC03":[(1,12,15),(1,12,15),(1,12,15)],
+            "MC04":[(1,12,15),(1,12,15),(1,12,15)],
+        },
+        "Extension de cuadriceps en maquina": {
+            "MC02":[(2,12,42.5),(1,12,50),(0,12,42.5)], "MC03":[(2,12,57.5),(1,12,57.5),(0,13,57.5)],
+            "MC04":[(2,12,57.5),(1,12,57.5),(0,12,62.5)],
+        },
+        "Curl femoral tumbado en maquina": {
+            "MC02":[(2,10,22.5),(1,10,22.5),(0,10,22.5)], "MC03":[(2,10,22.5),(1,10,22.5),(0,10,22.5)],
+            "MC04":[(2,10,22.5),(1,10,22.5),(0,10,22.5)],
+        },
+        "Elevaciones laterales con mancuerna": {
+            "MC02":[(0,15,8),(0,15,8),(0,15,8)], "MC03":[(0,18,9),(0,16,9),(0,16,9)],
+            "MC04":[(0,15,10),(0,15,10),(0,15,10)],
+        },
+        "Crunch abdominal en polea": {
+            "MC02":[(0,18,57.5),(0,16,57.5),(0,17,57.5)], "MC03":[(0,16,57.5),(0,16,57.5),(0,14,57.5)],
+            "MC04":[(0,16,57.5),(0,16,57.5),(0,16,57.5)],
+        },
+    },
+    4: {
+        "Prensa de piernas inclinada": {
+            "MC01":[(0,12,150),(0,10,150),(0,10,150)], "MC02":[(0,12,150),(0,9,150),(0,10,150)],
+            "MC03":[(0,10,160),(0,10,160),(0,10,160)], "MC04":[(0,12,165),(0,10,185),(0,8,185)],
+        },
+        "Curl femoral sentado en maquina": {
+            "MC01":[(1,13,47.5),(1,12,47.5),(0,12,47.5)], "MC02":[(1,12,47.5),(1,12,47.5),(0,12,47.5)],
+            "MC03":[(1,12,42.5),(1,12,42.5),(0,12,42.5)], "MC04":[(1,12,42.5),(1,12,50),(0,12,50)],
+        },
+    },
+    6: {
+        "Fondos de triceps en maquina": {
+            "MC01":[(0,15,80.9),(0,15,80.9),(0,15,80.9)], "MC02":[(0,15,93),(0,15,93),(0,15,93)],
+            "MC03":[(0,12,77.5),(0,12,77.5),(0,12,77.5)], "MC04":[(0,12,77.5),(0,12,77.5),(0,12,77.5)],
+        },
+    },
+}
+
+HIST_MACROS = [
+    ("2026-03-25",1353,124.1,130.5,26.6), ("2026-03-26",1865,143.5,237.0,36.6),
+    ("2026-03-27",1832,142.5,229.3,20.8), ("2026-03-28",1481,121.6,162.2,30.1),
+    ("2026-03-29",1631,124.4,213.8,30.2), ("2026-03-30",1669,136.1,192.8,29.4),
+    ("2026-03-31",1655,132.8,193.4,33.5), ("2026-04-01",1867,125.2,137.6,35.8),
+    ("2026-04-02",1601,173.9,162.1,25.7), ("2026-04-03",1421,121.7,169.1,21.9),
+    ("2026-04-04",1603,126.1,172.3,25.9), ("2026-04-05",1864,132.2,211.0,37.9),
+    ("2026-04-06",1773,122.5,165.3,35.5), ("2026-04-07",1886,134.6,250.4,34.6),
+    ("2026-04-08",1689,116.7,212.1,50.2), ("2026-04-09",1758,145.0,170.0,29.0),
+    ("2026-04-10",1375,132.0,114.8,35.1), ("2026-04-11",1836,141.5,253.0,29.3),
+    ("2026-04-12",1475,138.7,169.4,12.9), ("2026-04-13",1361,125.0,147.7,17.9),
+    ("2026-04-14",1398,117.1,146.9,34.2), ("2026-04-15",1657,164.5,178.5,36.4),
+    ("2026-04-16",1355,121.7,167.4,16.8), ("2026-04-17",1450,140.0,125.0,30.0),
+    ("2026-04-18",1140,111.0,91.4,34.8),  ("2026-04-19",1783,123.5,201.6,26.4),
+    ("2026-04-20",1938,147.1,245.5,31.8),
+]
+
+HIST_METRICS = [
+    ("2026-03-25",53.7,10416,7.0,12.0,""), ("2026-03-26",53.3,11510,7.0,11.3,""),
+    ("2026-03-27",53.9,11510,7.0,12.4,""), ("2026-03-28",54.0,None,8.0,12.6,""),
+    ("2026-03-29",53.8,6319,7.0,12.2,""),  ("2026-03-30",52.9,12425,10.0,10.5,""),
+    ("2026-03-31",52.6,6667,8.0,10.0,""),  ("2026-04-01",52.0,12433,8.0,8.8,""),
+    ("2026-04-02",52.7,8827,10.0,10.1,""), ("2026-04-03",53.2,4649,8.0,11.1,""),
+    ("2026-04-04",52.7,7953,6.0,10.1,""),  ("2026-04-05",53.2,5907,6.0,11.1,""),
+    ("2026-04-06",53.4,6772,6.0,11.4,""),  ("2026-04-07",53.3,16689,3.59,11.3,""),
+    ("2026-04-08",52.8,14624,7.11,10.3,""),("2026-04-09",53.2,15977,6.52,11.1,""),
+    ("2026-04-10",52.9,9050,7.32,10.5,""), ("2026-04-11",53.3,14982,7.12,11.3,""),
+    ("2026-04-12",53.3,10767,7.12,11.3,""),("2026-04-13",53.4,14982,7.48,11.4,""),
+    ("2026-04-14",53.0,16791,6.5,10.7,""), ("2026-04-15",52.8,14303,6.58,10.3,""),
+    ("2026-04-20",53.3,None,None,11.3,""), ("2026-04-21",53.4,None,None,11.4,""),
+]
+
+
+def bootstrap():
+    sb = get_sb()
+    # Insert exercises
+    for day, exercises in ROUTINE_DATA.items():
+        for idx, (name, reps_obj) in enumerate(exercises):
+            sb.table("exercises").upsert(
+                {"day": day, "name": name, "reps_obj": reps_obj, "order_idx": idx, "active": 1},
+                on_conflict="day,name"
+            ).execute()
+
+    # Insert historical workout sets
+    for day, exercises in HIST.items():
+        for ex_name, mc_data in exercises.items():
+            r = sb.table("exercises").select("id").eq("day", day).eq("name", ex_name).execute()
+            if not r.data:
+                ins = sb.table("exercises").insert(
+                    {"day": day, "name": ex_name, "reps_obj": "10-12", "order_idx": 99, "active": 1}
+                ).execute()
+                ex_id = ins.data[0]["id"]
+            else:
+                ex_id = r.data[0]["id"]
+            for mc, sets in mc_data.items():
+                for s_idx, (rir, reps, kg) in enumerate(sets):
+                    sb.table("workout_sets").upsert({
+                        "exercise_id": ex_id, "microcycle": mc,
+                        "set_num": s_idx + 1, "reps": reps, "kg": kg, "rir": rir
+                    }, on_conflict="exercise_id,microcycle,set_num").execute()
+
+    # Insert historical macros
+    for row in HIST_MACROS:
+        sb.table("macros_log").upsert(
+            {"log_date": row[0], "kcal": row[1], "protein": row[2], "carbs": row[3], "fat": row[4]},
+            on_conflict="log_date"
+        ).execute()
+
+    # Insert historical metrics
+    for row in HIST_METRICS:
+        sb.table("body_metrics").upsert(
+            {"metric_date": row[0], "weight": row[1], "steps": row[2],
+             "sleep": row[3], "bf_pct": row[4], "notes": row[5]},
+            on_conflict="metric_date"
+        ).execute()
+
+    # Mark as bootstrapped
+    sb.table("app_config").upsert(
+        {"key": "bootstrapped", "value": "1"}, on_conflict="key"
+    ).execute()
+
+
+def is_bootstrapped():
+    try:
+        sb = get_sb()
+        r = sb.table("app_config").select("value").eq("key", "bootstrapped").execute()
+        return bool(r.data) and r.data[0]["value"] == "1"
+    except Exception:
+        return False
+
+
+def init_db():
+    pass  # Tables managed in Supabase dashboard
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS — all return plain dicts, compatible with .get()
+# ─────────────────────────────────────────────────────────────────────────────
+def get_current_mc():
+    sb = get_sb()
+    r = sb.table("app_config").select("value").eq("key", "current_mc").execute()
+    return r.data[0]["value"] if r.data else "MC05"
+
+def set_current_mc(mc):
+    sb = get_sb()
+    sb.table("app_config").upsert({"key": "current_mc", "value": mc}, on_conflict="key").execute()
+
+def get_exercises(day):
+    sb = get_sb()
+    r = sb.table("exercises").select("*").eq("day", day).eq("active", 1).order("order_idx").execute()
+    return r.data  # list of dicts
+
+def add_exercise(day, name, reps_obj):
+    sb = get_sb()
+    r = sb.table("exercises").select("order_idx").eq("day", day).order("order_idx", desc=True).limit(1).execute()
+    next_idx = (r.data[0]["order_idx"] + 1) if r.data else 1
+    sb.table("exercises").insert(
+        {"day": day, "name": name, "reps_obj": reps_obj, "order_idx": next_idx, "active": 1}
+    ).execute()
+
+def deactivate_exercise(ex_id):
+    sb = get_sb()
+    sb.table("exercises").update({"active": 0}).eq("id", ex_id).execute()
+
+def get_sets(exercise_id, mc):
+    sb = get_sb()
+    r = sb.table("workout_sets").select("*").eq("exercise_id", exercise_id).eq("microcycle", mc).order("set_num").execute()
+    return r.data  # list of dicts — .get() works
+
+def calc_tonelaje(exercise_id, mc):
+    sets = get_sets(exercise_id, mc)
+    return sum((s.get("reps") or 0) * (s.get("kg") or 0) for s in sets)
+
+def upsert_set(exercise_id, mc, set_num, reps, kg, rir):
+    sb = get_sb()
+    sb.table("workout_sets").upsert({
+        "exercise_id": exercise_id, "microcycle": mc,
+        "set_num": set_num, "reps": reps, "kg": kg, "rir": rir
+    }, on_conflict="exercise_id,microcycle,set_num").execute()
+
+def delete_set(exercise_id, mc, set_num):
+    sb = get_sb()
+    sb.table("workout_sets").delete().eq("exercise_id", exercise_id).eq("microcycle", mc).eq("set_num", set_num).execute()
+
+def get_tonelaje_history(day, exercise_name):
+    sb = get_sb()
+    r = sb.table("exercises").select("id").eq("day", day).eq("name", exercise_name).execute()
+    if not r.data:
+        return {}
+    ex_id = r.data[0]["id"]
+    sets = sb.table("workout_sets").select("microcycle,reps,kg").eq("exercise_id", ex_id).execute().data
+    result = {}
+    for s in sets:
+        mc = s["microcycle"]
+        result[mc] = result.get(mc, 0) + (s.get("reps") or 0) * (s.get("kg") or 0)
+    return result
+
+def get_day_tonelaje_by_mc(day):
+    sb = get_sb()
+    exs = sb.table("exercises").select("id").eq("day", day).execute().data
+    if not exs:
+        return {}
+    ex_ids = [e["id"] for e in exs]
+    all_sets = sb.table("workout_sets").select("microcycle,reps,kg").in_("exercise_id", ex_ids).execute().data
+    result = {}
+    for s in all_sets:
+        mc = s["microcycle"]
+        result[mc] = result.get(mc, 0) + (s.get("reps") or 0) * (s.get("kg") or 0)
+    return result
+
+def get_prev_mc(current_mc):
+    num = int(current_mc[2:])
+    return f"MC{(num-1):02d}" if num > 1 else None
+
+def get_avg_rir(exercise_id, mc):
+    sets = get_sets(exercise_id, mc)
+    valid = [s["rir"] for s in sets if s.get("rir") is not None and (s.get("reps") or 0) > 0]
+    return sum(valid) / len(valid) if valid else None
+
+def estimate_1rm(reps, kg, rir=0):
+    effective = (reps or 0) + (rir or 0)
+    if effective <= 0 or (kg or 0) <= 0:
+        return 0.0
+    return round(kg * (1 + effective / 30), 1)
+
+def get_best_set(exercise_id, mc):
+    sets = get_sets(exercise_id, mc)
+    valid = [s for s in sets if (s.get("reps") or 0) > 0 and (s.get("kg") or 0) > 0]
+    if not valid:
+        return None
+    return max(valid, key=lambda s: estimate_1rm(s["reps"], s["kg"], s.get("rir", 0)))
+
+def get_streak():
+    sb = get_sb()
+    r = sb.table("macros_log").select("log_date").order("log_date", desc=True).limit(60).execute()
+    if not r.data:
+        return 0
+    today = date.today()
+    streak = 0
+    for i, row in enumerate(r.data):
+        expected = str(today - timedelta(days=i))
+        if row["log_date"] == expected:
+            streak += 1
+        else:
+            break
+    return streak
+
+def get_weekly_compliance(days=7):
+    sb = get_sb()
+    since = str(date.today() - timedelta(days=days - 1))
+    r = sb.table("macros_log").select("kcal,protein").gte("log_date", since).execute()
+    rows = r.data
+    total   = len(rows)
+    kcal_ok = sum(1 for x in rows if (x.get("kcal") or 0) >= MACROS_TARGET["kcal"] * 0.9)
+    prot_ok = sum(1 for x in rows if (x.get("protein") or 0) >= MACROS_TARGET["protein"] * 0.9)
+    return {"total": total, "kcal_ok": kcal_ok, "prot_ok": prot_ok}
+
+def get_rir_trend(exercise_id):
+    sb = get_sb()
+    sets = sb.table("workout_sets").select("microcycle,rir,reps").eq("exercise_id", exercise_id).order("microcycle").execute().data
+    mc_rirs = {}
+    for s in sets:
+        if (s.get("reps") or 0) > 0 and s.get("rir") is not None:
+            mc = s["microcycle"]
+            mc_rirs.setdefault(mc, []).append(s["rir"])
+    return [(mc, sum(v) / len(v)) for mc, v in sorted(mc_rirs.items())]
+
+def get_session_note(day, mc):
+    sb = get_sb()
+    r = sb.table("app_config").select("value").eq("key", f"note_day{day}_{mc}").execute()
+    return r.data[0]["value"] if r.data else ""
+
+def save_session_note(day, mc, note):
+    sb = get_sb()
+    sb.table("app_config").upsert(
+        {"key": f"note_day{day}_{mc}", "value": note}, on_conflict="key"
+    ).execute()
+
+def export_all_csv():
+    sb = get_sb()
+    sets_data    = sb.table("workout_sets").select("*").execute().data
+    macros_data  = sb.table("macros_log").select("*").execute().data
+    metrics_data = sb.table("body_metrics").select("*").execute().data
+    return pd.DataFrame(sets_data), pd.DataFrame(macros_data), pd.DataFrame(metrics_data)
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -28,60 +412,7 @@ DAY_LABELS = {
     6: ("VIE", "Hombro + Pecho + Tríceps + Core"),
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DATABASE
-# ─────────────────────────────────────────────────────────────────────────────
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
 
-def init_db():
-    conn = get_conn()
-    conn.executescript("""
-    CREATE TABLE IF NOT EXISTS exercises (
-        id       INTEGER PRIMARY KEY AUTOINCREMENT,
-        day      INTEGER NOT NULL,
-        name     TEXT NOT NULL,
-        reps_obj TEXT DEFAULT '8-12',
-        order_idx INTEGER DEFAULT 0,
-        active   INTEGER DEFAULT 1
-    );
-    CREATE TABLE IF NOT EXISTS workout_sets (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        exercise_id INTEGER NOT NULL,
-        microcycle  TEXT NOT NULL,
-        set_num     INTEGER NOT NULL,
-        reps        REAL DEFAULT 0,
-        kg          REAL DEFAULT 0,
-        rir         REAL DEFAULT 1,
-        FOREIGN KEY(exercise_id) REFERENCES exercises(id)
-    );
-    CREATE TABLE IF NOT EXISTS macros_log (
-        id       INTEGER PRIMARY KEY AUTOINCREMENT,
-        log_date TEXT UNIQUE,
-        kcal     REAL DEFAULT 0,
-        protein  REAL DEFAULT 0,
-        carbs    REAL DEFAULT 0,
-        fat      REAL DEFAULT 0,
-        notes    TEXT DEFAULT ''
-    );
-    CREATE TABLE IF NOT EXISTS body_metrics (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        metric_date TEXT UNIQUE,
-        weight      REAL,
-        steps       REAL,
-        sleep       REAL,
-        bf_pct      REAL,
-        notes       TEXT DEFAULT ''
-    );
-    CREATE TABLE IF NOT EXISTS app_config (
-        key   TEXT PRIMARY KEY,
-        value TEXT
-    );
-    """)
-    conn.commit()
-    conn.close()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BOOTSTRAP DATA
@@ -393,250 +724,7 @@ HIST_METRICS = [
 ]
 
 
-def bootstrap(conn):
-    c = conn.cursor()
-    for day, exercises in ROUTINE_DATA.items():
-        for idx, (name, reps_obj) in enumerate(exercises):
-            c.execute("INSERT OR IGNORE INTO exercises (day,name,reps_obj,order_idx) VALUES(?,?,?,?)",
-                      (day, name, reps_obj, idx))
-    conn.commit()
 
-    for day, exercises in HIST.items():
-        for ex_name, mc_data in exercises.items():
-            c.execute("SELECT id FROM exercises WHERE day=? AND name LIKE ?",
-                      (day, f"%{ex_name[:25]}%"))
-            row = c.fetchone()
-            if row:
-                ex_id = row["id"]
-            else:
-                c.execute("INSERT INTO exercises(day,name,reps_obj,order_idx) VALUES(?,?,?,?)",
-                          (day, ex_name, "10-12", 99))
-                conn.commit()
-                ex_id = c.lastrowid
-            for mc, sets in mc_data.items():
-                for s_idx, (rir, reps, kg) in enumerate(sets):
-                    c.execute("INSERT INTO workout_sets(exercise_id,microcycle,set_num,reps,kg,rir) VALUES(?,?,?,?,?,?)",
-                              (ex_id, mc, s_idx+1, reps, kg, rir))
-    conn.commit()
-
-    for row in HIST_MACROS:
-        c.execute("INSERT OR IGNORE INTO macros_log(log_date,kcal,protein,carbs,fat) VALUES(?,?,?,?,?)", row)
-    for row in HIST_METRICS:
-        c.execute("INSERT OR IGNORE INTO body_metrics(metric_date,weight,steps,sleep,bf_pct,notes) VALUES(?,?,?,?,?,?)", row)
-    c.execute("INSERT OR REPLACE INTO app_config(key,value) VALUES('bootstrapped','1')")
-    conn.commit()
-
-
-def is_bootstrapped():
-    conn = get_conn()
-    try:
-        row = conn.execute("SELECT value FROM app_config WHERE key='bootstrapped'").fetchone()
-        return row is not None and row["value"] == "1"
-    except:
-        return False
-    finally:
-        conn.close()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
-def get_current_mc():
-    conn = get_conn()
-    row = conn.execute("SELECT value FROM app_config WHERE key='current_mc'").fetchone()
-    conn.close()
-    return row["value"] if row else "MC05"
-
-def set_current_mc(mc):
-    conn = get_conn()
-    conn.execute("INSERT OR REPLACE INTO app_config(key,value) VALUES('current_mc',?)", (mc,))
-    conn.commit()
-    conn.close()
-
-def get_exercises(day):
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM exercises WHERE day=? AND active=1 ORDER BY order_idx", (day,)
-    ).fetchall()
-    conn.close()
-    return rows
-
-def get_sets(exercise_id, mc):
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM workout_sets WHERE exercise_id=? AND microcycle=? ORDER BY set_num",
-        (exercise_id, mc)
-    ).fetchall()
-    conn.close()
-    return rows
-
-def calc_tonelaje(exercise_id, mc):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT COALESCE(SUM(reps*kg),0) as t FROM workout_sets WHERE exercise_id=? AND microcycle=?",
-        (exercise_id, mc)
-    ).fetchone()
-    conn.close()
-    return row["t"] if row else 0
-
-def upsert_set(exercise_id, mc, set_num, reps, kg, rir):
-    conn = get_conn()
-    existing = conn.execute(
-        "SELECT id FROM workout_sets WHERE exercise_id=? AND microcycle=? AND set_num=?",
-        (exercise_id, mc, set_num)
-    ).fetchone()
-    if existing:
-        conn.execute("UPDATE workout_sets SET reps=?,kg=?,rir=? WHERE id=?",
-                     (reps, kg, rir, existing["id"]))
-    else:
-        conn.execute("INSERT INTO workout_sets(exercise_id,microcycle,set_num,reps,kg,rir) VALUES(?,?,?,?,?,?)",
-                     (exercise_id, mc, set_num, reps, kg, rir))
-    conn.commit()
-    conn.close()
-
-def delete_set(exercise_id, mc, set_num):
-    conn = get_conn()
-    conn.execute("DELETE FROM workout_sets WHERE exercise_id=? AND microcycle=? AND set_num=?",
-                 (exercise_id, mc, set_num))
-    conn.commit()
-    conn.close()
-
-def add_exercise(day, name, reps_obj):
-    conn = get_conn()
-    row = conn.execute("SELECT MAX(order_idx) as m FROM exercises WHERE day=?", (day,)).fetchone()
-    next_idx = (row["m"] or 0) + 1
-    conn.execute("INSERT INTO exercises(day,name,reps_obj,order_idx) VALUES(?,?,?,?)",
-                 (day, name, reps_obj, next_idx))
-    conn.commit()
-    conn.close()
-
-def deactivate_exercise(ex_id):
-    conn = get_conn()
-    conn.execute("UPDATE exercises SET active=0 WHERE id=?", (ex_id,))
-    conn.commit()
-    conn.close()
-
-def get_tonelaje_history(day, exercise_name):
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT ws.microcycle, COALESCE(SUM(ws.reps * ws.kg), 0) as tonelaje
-        FROM workout_sets ws
-        JOIN exercises e ON ws.exercise_id = e.id
-        WHERE e.day=? AND e.name=?
-        GROUP BY ws.microcycle
-        ORDER BY ws.microcycle
-    """, (day, exercise_name)).fetchall()
-    conn.close()
-    return {r["microcycle"]: r["tonelaje"] for r in rows}
-
-def get_day_tonelaje_by_mc(day):
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT ws.microcycle, COALESCE(SUM(ws.reps * ws.kg), 0) as tonelaje
-        FROM workout_sets ws JOIN exercises e ON ws.exercise_id=e.id
-        WHERE e.day=?
-        GROUP BY ws.microcycle ORDER BY ws.microcycle
-    """, (day,)).fetchall()
-    conn.close()
-    return {r["microcycle"]: r["tonelaje"] for r in rows}
-
-def get_prev_mc(current_mc):
-    num = int(current_mc[2:])
-    return f"MC{(num-1):02d}" if num > 1 else None
-
-def get_avg_rir(exercise_id, mc):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT AVG(rir) as avg_rir FROM workout_sets WHERE exercise_id=? AND microcycle=? AND reps>0",
-        (exercise_id, mc)
-    ).fetchone()
-    conn.close()
-    return row["avg_rir"] if row and row["avg_rir"] is not None else None
-
-def estimate_1rm(reps, kg, rir=0):
-    effective = reps + rir
-    if effective <= 0 or kg <= 0:
-        return 0.0
-    return round(kg * (1 + effective / 30), 1)
-
-def get_best_set(exercise_id, mc):
-    """Returns the set with highest estimated 1RM for a given exercise/mc."""
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT reps, kg, rir FROM workout_sets WHERE exercise_id=? AND microcycle=? AND reps>0 AND kg>0",
-        (exercise_id, mc)
-    ).fetchall()
-    conn.close()
-    if not rows:
-        return None
-    best = max(rows, key=lambda r: estimate_1rm(r["reps"], r["kg"], r["rir"]))
-    return dict(best)
-
-def get_streak():
-    conn = get_conn()
-    rows = conn.execute("SELECT log_date FROM macros_log ORDER BY log_date DESC").fetchall()
-    conn.close()
-    if not rows:
-        return 0
-    today = date.today()
-    streak = 0
-    for row in rows:
-        d = date.fromisoformat(row["log_date"])
-        if d == today - timedelta(days=streak):
-            streak += 1
-        else:
-            break
-    return streak
-
-def get_weekly_compliance(days=7):
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT kcal, protein FROM macros_log ORDER BY log_date DESC LIMIT ?", (days,)
-    ).fetchall()
-    conn.close()
-    total = len(rows)
-    kcal_ok = sum(1 for r in rows if r["kcal"] >= MACROS_TARGET["kcal"] * 0.9)
-    prot_ok = sum(1 for r in rows if r["protein"] >= MACROS_TARGET["protein"] * 0.9)
-    return {"total": total, "kcal_ok": kcal_ok, "prot_ok": prot_ok}
-
-def get_rir_trend(exercise_id):
-    """Returns list of (mc, avg_rir) sorted by microcycle."""
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT microcycle, AVG(rir) as avg_rir
-        FROM workout_sets WHERE exercise_id=? AND reps>0
-        GROUP BY microcycle ORDER BY microcycle
-    """, (exercise_id,)).fetchall()
-    conn.close()
-    return [(r["microcycle"], r["avg_rir"]) for r in rows]
-
-def get_session_note(day, mc):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT value FROM app_config WHERE key=?", (f"note_day{day}_{mc}",)
-    ).fetchone()
-    conn.close()
-    return row["value"] if row else ""
-
-def save_session_note(day, mc, note):
-    conn = get_conn()
-    conn.execute("INSERT OR REPLACE INTO app_config(key,value) VALUES(?,?)",
-                 (f"note_day{day}_{mc}", note))
-    conn.commit()
-    conn.close()
-
-def export_all_csv():
-    """Returns a dict of DataFrames for CSV export."""
-    conn = get_conn()
-    sets_df = pd.read_sql_query("""
-        SELECT e.day, e.name as ejercicio, ws.microcycle, ws.set_num,
-               ws.reps, ws.kg, ws.rir, ROUND(ws.reps*ws.kg,1) as tonelaje_set
-        FROM workout_sets ws JOIN exercises e ON ws.exercise_id=e.id
-        ORDER BY e.day, ws.microcycle, ws.set_num
-    """, conn)
-    macros_df = pd.read_sql_query("SELECT * FROM macros_log ORDER BY log_date", conn)
-    metrics_df = pd.read_sql_query("SELECT * FROM body_metrics ORDER BY metric_date", conn)
-    conn.close()
-    return sets_df, macros_df, metrics_df
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI COMPONENTS
@@ -661,111 +749,126 @@ def macro_bar(label, current, target, color):
 
 
 def render_exercise_block(ex, current_mc):
-    ex_id  = ex["id"]
-    ex_name = ex["name"]
-    sets    = get_sets(ex_id, current_mc)
+    ex_id    = ex["id"]
+    ex_name  = ex["name"]
+    sets     = get_sets(ex_id, current_mc)
     tonelaje = calc_tonelaje(ex_id, current_mc)
-    prev_mc = get_prev_mc(current_mc)
-    avg_rir = get_avg_rir(ex_id, current_mc)
-    best    = get_best_set(ex_id, current_mc)
-    e1rm    = estimate_1rm(best["reps"], best["kg"], best["rir"]) if best else 0
+    prev_mc  = get_prev_mc(current_mc)
+    avg_rir  = get_avg_rir(ex_id, current_mc)
+    best     = get_best_set(ex_id, current_mc)
+    e1rm     = estimate_1rm(best["reps"], best["kg"], best["rir"]) if best else 0
 
-    # RIR color badge
+    # RIR badge
     if avg_rir is None:
         rir_badge = "<span style='color:#8b949e'>RIR —</span>"
     elif avg_rir <= 0.5:
-        rir_badge = f"<span style='color:#e74c3c;font-weight:600'>RIR {avg_rir:.1f} ⚠ Fatiga</span>"
+        rir_badge = f"<span style='color:#e74c3c;font-weight:600'>RIR {avg_rir:.1f} — Fatiga alta</span>"
     elif avg_rir <= 1.5:
         rir_badge = f"<span style='color:#f39c12;font-weight:600'>RIR {avg_rir:.1f}</span>"
     else:
         rir_badge = f"<span style='color:#27ae60;font-weight:600'>RIR {avg_rir:.1f}</span>"
 
-    label = (f"**{ex_name}** — {ex['reps_obj']}  |  "
-             f"Ton: **{tonelaje:,.0f} kg**  |  1RM est: **{e1rm} kg**")
+    e1rm_str = f"{e1rm} kg" if e1rm > 0 else "—"
+    ton_str  = f"{tonelaje:,.0f} kg" if tonelaje > 0 else "0 kg"
+    label    = (f"**{ex_name}** — {ex['reps_obj']}  |  "
+                f"Ton: **{ton_str}**  |  1RM est: **{e1rm_str}**")
 
-    with st.expander(label):
-        # ── Inline prev MC comparison ──
+    # Auto-expand if no sets recorded yet
+    with st.expander(label, expanded=(tonelaje == 0)):
+
+        # ── Prev MC comparison banner ──
         if prev_mc:
-            prev_sets = get_sets(ex_id, prev_mc)
-            prev_ton  = calc_tonelaje(ex_id, prev_mc)
-            if prev_sets:
-                delta_ton = tonelaje - prev_ton
+            prev_ton = calc_tonelaje(ex_id, prev_mc)
+            if prev_ton > 0:
+                delta_ton   = tonelaje - prev_ton
                 delta_color = "#27ae60" if delta_ton >= 0 else "#e74c3c"
                 delta_sign  = "+" if delta_ton >= 0 else ""
                 st.markdown(
                     f"<div style='background:#0d1117;border:1px solid #21262d;border-radius:6px;"
-                    f"padding:8px 12px;margin-bottom:10px;font-size:0.82rem;color:#8b949e'>"
-                    f"<b style='color:#c9d1d9'>{prev_mc}</b> &nbsp;·&nbsp; Tonelaje: {prev_ton:,.0f} kg"
-                    f"&nbsp;&nbsp;<span style='color:{delta_color}'>{delta_sign}{delta_ton:,.0f} kg vs ahora</span>"
+                    f"padding:8px 12px;margin-bottom:12px;font-size:0.82rem;color:#8b949e'>"
+                    f"<b style='color:#c9d1d9'>{prev_mc}</b> &nbsp;·&nbsp; {prev_ton:,.0f} kg"
+                    f"&nbsp;&nbsp;<span style='color:{delta_color}'>{delta_sign}{delta_ton:,.0f} kg</span>"
                     f"&nbsp;&nbsp;|&nbsp;&nbsp;{rir_badge}</div>",
                     unsafe_allow_html=True
                 )
 
-        # ── Set table header ──
-        cols = st.columns([0.25, 0.25, 0.2, 0.2, 0.1])
-        for h, c in zip(["**RIR**", "**Reps**", "**Kg**", "**Ton.**", ""], cols):
-            c.markdown(h)
+        # ── Build editable table ──
+        existing_rows = [dict(s) for s in sets]
+        if existing_rows:
+            df_sets = pd.DataFrame([{
+                "Reps": int(r["reps"]), "Kg": float(r["kg"]), "RIR": float(r["rir"])
+            } for r in existing_rows])
+        else:
+            df_sets = pd.DataFrame([
+                {"Reps": 0, "Kg": 0.0, "RIR": 1.0},
+                {"Reps": 0, "Kg": 0.0, "RIR": 1.0},
+                {"Reps": 0, "Kg": 0.0, "RIR": 1.0},
+            ])
 
-        existing = {s["set_num"]: dict(s) for s in sets}
-        n_sets   = max(len(sets), 3)
+        edited = st.data_editor(
+            df_sets,
+            column_config={
+                "Reps": st.column_config.NumberColumn(
+                    "Reps", min_value=0, max_value=60, step=1, format="%d reps"),
+                "Kg": st.column_config.NumberColumn(
+                    "Kg", min_value=0.0, max_value=500.0, step=2.5, format="%.1f kg"),
+                "RIR": st.column_config.SelectboxColumn(
+                    "RIR", options=[0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]),
+            },
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=False,
+            key=f"editor_{ex_id}_{current_mc}",
+        )
 
-        for sn in range(1, n_sets + 1):
-            s = existing.get(sn, {})
-            c0, c1, c2, c3, c4 = st.columns([0.25, 0.25, 0.2, 0.2, 0.1])
-            key  = f"{ex_id}_{current_mc}_{sn}"
-            rir  = c0.number_input("", value=float(s.get("rir", 1)), min_value=0.0,
-                                   max_value=5.0, step=0.5, key=f"rir_{key}",
-                                   label_visibility="collapsed")
-            reps = c1.number_input("", value=float(s.get("reps", 0)), min_value=0.0,
-                                   step=1.0, key=f"reps_{key}",
-                                   label_visibility="collapsed")
-            kg   = c2.number_input("", value=float(s.get("kg", 0)), min_value=0.0,
-                                   step=2.5, key=f"kg_{key}",
-                                   label_visibility="collapsed")
-            c3.markdown(f"<div style='padding-top:8px'>{reps*kg:,.0f}</div>",
-                        unsafe_allow_html=True)
-            # Confirmation-safe delete
-            del_key = f"del_confirm_{key}"
-            if del_key not in st.session_state:
-                st.session_state[del_key] = False
-            if not st.session_state[del_key]:
-                if c4.button("✕", key=f"del_{key}") and sn in existing:
-                    st.session_state[del_key] = True
-                    st.rerun()
-            else:
-                if c4.button("OK", key=f"conf_{key}"):
-                    delete_set(ex_id, current_mc, sn)
-                    st.session_state[del_key] = False
-                    st.rerun()
-            if reps > 0 and kg > 0 and sn in existing:
-                old = existing[sn]
-                if old["reps"] != reps or old["kg"] != kg or old["rir"] != rir:
-                    upsert_set(ex_id, current_mc, sn, reps, kg, rir)
-            elif reps > 0 and kg > 0 and sn not in existing:
-                upsert_set(ex_id, current_mc, sn, reps, kg, rir)
+        # Live tonelaje preview
+        valid = edited[(edited["Reps"] > 0) & (edited["Kg"] > 0)]
+        live_ton = int((valid["Reps"] * valid["Kg"]).sum())
+        if live_ton > 0:
+            st.caption(f"Tonelaje de esta sesion: **{live_ton:,} kg** en {len(valid)} series")
 
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-        c_add, c_del_ex = st.columns(2)
-        if c_add.button("+ Añadir serie", key=f"add_set_{ex_id}_{current_mc}"):
-            upsert_set(ex_id, current_mc, n_sets + 1, 0, 0, 1)
+        # ── Action buttons ──
+        col_save, col_clear, col_del_ex = st.columns([1, 1, 1])
+
+        if col_save.button("Guardar", key=f"save_{ex_id}_{current_mc}", type="primary"):
+            sb_s = get_sb()
+            sb_s.table("workout_sets").delete().eq("exercise_id", ex_id).eq("microcycle", current_mc).execute()
+            for i, row in edited.iterrows():
+                reps = int(row.get("Reps") or 0)
+                kg   = float(row.get("Kg") or 0)
+                rir  = float(row.get("RIR") or 1)
+                if reps > 0 and kg > 0:
+                    sb_s.table("workout_sets").insert(
+                        {"exercise_id": ex_id, "microcycle": current_mc,
+                         "set_num": i + 1, "reps": reps, "kg": kg, "rir": rir}
+                    ).execute()
+            st.success(f"Guardado — {live_ton:,} kg total")
             st.rerun()
-        del_ex_key = f"del_ex_confirm_{ex_id}"
+
+        if col_clear.button("Limpiar series", key=f"clear_{ex_id}_{current_mc}"):
+            get_sb().table("workout_sets").delete().eq("exercise_id", ex_id).eq("microcycle", current_mc).execute()
+            st.rerun()
+
+        # Delete exercise
+        del_ex_key = f"del_ex_{ex_id}"
         if del_ex_key not in st.session_state:
             st.session_state[del_ex_key] = False
         if not st.session_state[del_ex_key]:
-            if c_del_ex.button("Quitar ejercicio", key=f"del_ex_{ex_id}"):
+            if col_del_ex.button("Quitar ejercicio", key=f"btn_del_ex_{ex_id}"):
                 st.session_state[del_ex_key] = True
                 st.rerun()
         else:
-            c_del_ex.warning("Confirmar eliminacion")
-            cc1, cc2 = st.columns(2)
-            if cc1.button("Si, quitar", key=f"conf_ex_yes_{ex_id}"):
+            col_del_ex.warning("Confirmar?")
+            cy, cn = st.columns(2)
+            if cy.button("Si, quitar", key=f"yes_del_ex_{ex_id}"):
                 deactivate_exercise(ex_id)
                 st.session_state[del_ex_key] = False
                 st.rerun()
-            if cc2.button("Cancelar", key=f"conf_ex_no_{ex_id}"):
+            if cn.button("Cancelar", key=f"no_del_ex_{ex_id}"):
                 st.session_state[del_ex_key] = False
                 st.rerun()
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGES
@@ -816,9 +919,9 @@ def page_dashboard():
     # ── KPIs hoy ──
     st.subheader("Nutricion de hoy")
     today_str = str(date.today())
-    conn = get_conn()
-    today_row = conn.execute("SELECT * FROM macros_log WHERE log_date=?", (today_str,)).fetchone()
-    conn.close()
+    sb = get_sb()
+    today_rows = sb.table("macros_log").select("*").eq("log_date", today_str).execute().data
+    today_row = today_rows[0] if today_rows else None
     cur = {k: (today_row[k] if today_row else 0) for k in ["kcal","protein","carbs","fat"]}
 
     k1, k2, k3, k4 = st.columns(4)
@@ -831,12 +934,8 @@ def page_dashboard():
     kpi(k4,"Grasa",    cur["fat"],    MACROS_TARGET["fat"],    "g")
 
     # ── Nutrition insight banner ──
-    conn = get_conn()
-    last7 = conn.execute(
-        "SELECT protein FROM macros_log ORDER BY log_date DESC LIMIT 7"
-    ).fetchall()
-    conn.close()
-    low_prot_days = sum(1 for r in last7 if r["protein"] < MACROS_TARGET["protein"] * 0.85)
+    last7 = sb.table("macros_log").select("protein").order("log_date", desc=True).limit(7).execute().data
+    low_prot_days = sum(1 for r in last7 if (r.get("protein") or 0) < MACROS_TARGET["protein"] * 0.85)
     if low_prot_days >= 3:
         st.warning(f"Proteina baja los ultimos {low_prot_days} de 7 dias (< 85% objetivo). Revisa tu ingesta proteica.")
     elif cur["kcal"] > MACROS_TARGET["kcal"] * 1.15:
@@ -859,10 +958,11 @@ def page_dashboard():
             notes   = st.text_input("Notas", value=today_row["notes"] if today_row else "")
             submitted = st.form_submit_button("Guardar", type="primary")
             if submitted:
-                conn = get_conn()
-                conn.execute("""INSERT OR REPLACE INTO macros_log(log_date,kcal,protein,carbs,fat,notes)
-                                VALUES(?,?,?,?,?,?)""", (today_str, kcal, protein, carbs, fat, notes))
-                conn.commit(); conn.close()
+                sb.table("macros_log").upsert(
+                    {"log_date": today_str, "kcal": kcal, "protein": protein,
+                     "carbs": carbs, "fat": fat, "notes": notes},
+                    on_conflict="log_date"
+                ).execute()
                 st.success(f"Guardado: {kcal:.0f} kcal · {protein:.0f}g proteina · {carbs:.0f}g carbos · {fat:.0f}g grasa")
                 st.rerun()
 
@@ -896,11 +996,8 @@ def page_dashboard():
 
     with col_right:
         st.subheader("Peso corporal")
-        conn = get_conn()
-        bm = pd.DataFrame([dict(r) for r in conn.execute(
-            "SELECT metric_date, weight, bf_pct FROM body_metrics WHERE weight IS NOT NULL ORDER BY metric_date"
-        ).fetchall()])
-        conn.close()
+        bm_data = sb.table("body_metrics").select("metric_date,weight,bf_pct").not_.is_("weight", "null").order("metric_date").execute().data
+        bm = pd.DataFrame(bm_data)
         if not bm.empty:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=bm["metric_date"], y=bm["weight"],
@@ -916,11 +1013,8 @@ def page_dashboard():
 
     # ── Macro trends ──
     st.subheader("Calorias y proteina — ultimas 4 semanas")
-    conn = get_conn()
-    ml = pd.DataFrame([dict(r) for r in conn.execute(
-        "SELECT * FROM macros_log ORDER BY log_date DESC LIMIT 28"
-    ).fetchall()])
-    conn.close()
+    ml_data = sb.table("macros_log").select("*").order("log_date", desc=True).limit(28).execute().data
+    ml = pd.DataFrame(ml_data)
     if not ml.empty:
         ml = ml.sort_values("log_date")
         fig2 = go.Figure()
@@ -1029,11 +1123,8 @@ def page_progress():
 
     for ti, day in enumerate(range(1,7)):
         with tabs[ti]:
-            conn = get_conn()
-            exs = conn.execute(
-                "SELECT id, name FROM exercises WHERE day=? AND active=1", (day,)
-            ).fetchall()
-            conn.close()
+            sb2 = get_sb()
+            exs = sb2.table("exercises").select("id,name").eq("day", day).eq("active", 1).execute().data
             if not exs:
                 st.info("Sin datos.")
                 continue
@@ -1064,14 +1155,9 @@ def page_progress():
 
             # 1RM estimated per MC
             with col_1rm:
-                conn = get_conn()
-                rm_rows = conn.execute("""
-                    SELECT ws.microcycle, ws.reps, ws.kg, ws.rir
-                    FROM workout_sets ws
-                    WHERE ws.exercise_id=? AND ws.reps>0 AND ws.kg>0
-                    ORDER BY ws.microcycle, ws.set_num
-                """, (ex_id,)).fetchall()
-                conn.close()
+                rm_rows = sb2.table("workout_sets").select(
+                    "microcycle,reps,kg,rir"
+                ).eq("exercise_id", ex_id).gt("reps", 0).gt("kg", 0).order("microcycle").execute().data
                 rm_by_mc = {}
                 for r in rm_rows:
                     mc = r["microcycle"]
@@ -1113,13 +1199,10 @@ def page_progress():
                 )
                 st.plotly_chart(fig_rir, use_container_width=True, key=f"prog_rir_{day}_{ex_id}")
 
-    # ── Biometrics: Peso + BF% + Pasos + Sueño ──
+    # ── Biometrics: Peso + BF% + Pasos + Sueno ──
     st.subheader("Peso, BF% y habitos")
-    conn = get_conn()
-    bm = pd.DataFrame([dict(r) for r in conn.execute(
-        "SELECT metric_date,weight,bf_pct,steps,sleep FROM body_metrics ORDER BY metric_date"
-    ).fetchall()])
-    conn.close()
+    bm_all = get_sb().table("body_metrics").select("metric_date,weight,bf_pct,steps,sleep").order("metric_date").execute().data
+    bm = pd.DataFrame(bm_all)
     if not bm.empty:
         c_body, c_habits = st.columns(2)
         with c_body:
@@ -1174,12 +1257,8 @@ def page_settings():
 
     # Pre-fill with existing data for selected date
     b_date = st.date_input("Fecha", value=date.today(), key="body_date_sel")
-    conn = get_conn()
-    existing_bm = conn.execute(
-        "SELECT * FROM body_metrics WHERE metric_date=?", (str(b_date),)
-    ).fetchone()
-    conn.close()
-    existing_bm = dict(existing_bm) if existing_bm else {}
+    bm_rows = get_sb().table("body_metrics").select("*").eq("metric_date", str(b_date)).execute().data
+    existing_bm = bm_rows[0] if bm_rows else {}
 
     if existing_bm:
         st.caption(f"Ya tienes datos para esta fecha: {existing_bm.get('weight', 0)} kg · {int(existing_bm.get('steps') or 0)} pasos · {existing_bm.get('sleep', 0)}h sueno")
@@ -1192,36 +1271,31 @@ def page_settings():
         b_notes = st.text_input("Notas", value=existing_bm.get("notes") or "")
         submitted_bm = st.form_submit_button("Guardar", type="primary")
         if submitted_bm:
-            conn = get_conn()
-            conn.execute("""INSERT OR REPLACE INTO body_metrics(metric_date,weight,steps,sleep,notes)
-                            VALUES(?,?,?,?,?)""",
-                         (str(b_date), b_w if b_w > 0 else None,
-                          b_steps if b_steps > 0 else None,
-                          b_sleep if b_sleep > 0 else None, b_notes))
-            conn.commit(); conn.close()
+            get_sb().table("body_metrics").upsert(
+                {"metric_date": str(b_date),
+                 "weight": b_w if b_w > 0 else None,
+                 "steps": b_steps if b_steps > 0 else None,
+                 "sleep": b_sleep if b_sleep > 0 else None,
+                 "notes": b_notes},
+                on_conflict="metric_date"
+            ).execute()
             st.success(f"Guardado para {b_date}: {b_w} kg · {b_steps} pasos · {b_sleep}h")
             st.rerun()
 
     st.markdown("---")
     st.subheader("Ultimas entradas")
-    conn = get_conn()
-    bm = pd.DataFrame([dict(r) for r in conn.execute(
-        "SELECT metric_date,weight,steps,sleep,bf_pct,notes FROM body_metrics ORDER BY metric_date DESC LIMIT 14"
-    ).fetchall()])
-    conn.close()
-    if not bm.empty:
-        st.dataframe(bm, use_container_width=True)
+    bm_recent = get_sb().table("body_metrics").select("metric_date,weight,steps,sleep,bf_pct,notes").order("metric_date", desc=True).limit(14).execute().data
+    bm_df = pd.DataFrame(bm_recent)
+    if not bm_df.empty:
+        st.dataframe(bm_df, use_container_width=True)
 
-    # ── Deload warning ──
     st.markdown("---")
     st.subheader("Como vas con la fatiga")
-    conn = get_conn()
-    exs_all = conn.execute("SELECT id FROM exercises WHERE active=1").fetchall()
+    exs_all = get_sb().table("exercises").select("id").eq("active", 1).execute().data
     low_rir_count = sum(
         1 for e in exs_all
         if (get_avg_rir(e["id"], current_mc) or 99) <= 0.5
     )
-    conn.close()
     total_ex = len(exs_all) or 1
     fatigue_pct = low_rir_count / total_ex
     if fatigue_pct >= 0.4:
@@ -1261,11 +1335,9 @@ def page_settings():
     st.markdown("---")
     st.caption("Zona peligrosa: esto borra y recrea todos los ejercicios historicos desde cero.")
     if st.button("Restaurar datos de ejemplo"):
-        conn = get_conn()
-        conn.execute("DELETE FROM app_config WHERE key='bootstrapped'")
-        conn.commit()
-        bootstrap(conn)
-        conn.close()
+        sb_r = get_sb()
+        sb_r.table("app_config").delete().eq("key", "bootstrapped").execute()
+        bootstrap()
         st.success("Datos restaurados correctamente."); st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1426,10 +1498,8 @@ hr { border-color: #21262d; margin: 1.25rem 0; }
 # ─────────────────────────────────────────────────────────────────────────────
 init_db()
 if not is_bootstrapped():
-    with st.spinner("Importando datos históricos — primer arranque…"):
-        conn = get_conn()
-        bootstrap(conn)
-        conn.close()
+    with st.spinner("Importando datos historicos — primer arranque..."):
+        bootstrap()
     st.success("Bootstrap completado. Datos importados correctamente.")
     st.rerun()
 

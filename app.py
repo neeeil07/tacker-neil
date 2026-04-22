@@ -183,51 +183,58 @@ HIST_METRICS = [
 
 def bootstrap():
     sb = get_sb()
-    # Insert exercises
-    for day, exercises in ROUTINE_DATA.items():
-        for idx, (name, reps_obj) in enumerate(exercises):
-            sb.table("exercises").upsert(
-                {"day": day, "name": name, "reps_obj": reps_obj, "order_idx": idx, "active": 1},
-                on_conflict="day,name"
-            ).execute()
 
-    # Insert historical workout sets
+    # ── Exercises ──────────────────────────────────────────────────────────────
+    # Insert all at once, skipping duplicates (uses UNIQUE(day,name) constraint)
+    exercises_payload = [
+        {"day": day, "name": name, "reps_obj": reps_obj, "order_idx": idx, "active": 1}
+        for day, exs in ROUTINE_DATA.items()
+        for idx, (name, reps_obj) in enumerate(exs)
+    ]
+    sb.table("exercises").upsert(exercises_payload, ignore_duplicates=True).execute()
+
+    # Build a lookup: (day, name) -> id
+    ex_rows = sb.table("exercises").select("id,day,name").execute().data
+    ex_map = {(e["day"], e["name"]): e["id"] for e in ex_rows}
+
+    # ── Historical workout sets ─────────────────────────────────────────────────
+    sets_payload = []
     for day, exercises in HIST.items():
         for ex_name, mc_data in exercises.items():
-            r = sb.table("exercises").select("id").eq("day", day).eq("name", ex_name).execute()
-            if not r.data:
-                ins = sb.table("exercises").insert(
+            ex_id = ex_map.get((day, ex_name))
+            if ex_id is None:
+                r = sb.table("exercises").insert(
                     {"day": day, "name": ex_name, "reps_obj": "10-12", "order_idx": 99, "active": 1}
                 ).execute()
-                ex_id = ins.data[0]["id"]
-            else:
                 ex_id = r.data[0]["id"]
+                ex_map[(day, ex_name)] = ex_id
             for mc, sets in mc_data.items():
                 for s_idx, (rir, reps, kg) in enumerate(sets):
-                    sb.table("workout_sets").upsert({
+                    sets_payload.append({
                         "exercise_id": ex_id, "microcycle": mc,
                         "set_num": s_idx + 1, "reps": reps, "kg": kg, "rir": rir
-                    }, on_conflict="exercise_id,microcycle,set_num").execute()
+                    })
+    if sets_payload:
+        sb.table("workout_sets").upsert(sets_payload, ignore_duplicates=True).execute()
 
-    # Insert historical macros
-    for row in HIST_MACROS:
-        sb.table("macros_log").upsert(
-            {"log_date": row[0], "kcal": row[1], "protein": row[2], "carbs": row[3], "fat": row[4]},
-            on_conflict="log_date"
-        ).execute()
+    # ── Historical macros (bulk) ────────────────────────────────────────────────
+    macros_payload = [
+        {"log_date": r[0], "kcal": r[1], "protein": r[2], "carbs": r[3], "fat": r[4]}
+        for r in HIST_MACROS
+    ]
+    sb.table("macros_log").upsert(macros_payload, ignore_duplicates=True).execute()
 
-    # Insert historical metrics
-    for row in HIST_METRICS:
-        sb.table("body_metrics").upsert(
-            {"metric_date": row[0], "weight": row[1], "steps": row[2],
-             "sleep": row[3], "bf_pct": row[4], "notes": row[5]},
-            on_conflict="metric_date"
-        ).execute()
+    # ── Historical body metrics (bulk) ─────────────────────────────────────────
+    metrics_payload = [
+        {"metric_date": r[0], "weight": r[1], "steps": r[2],
+         "sleep": r[3], "bf_pct": r[4], "notes": r[5]}
+        for r in HIST_METRICS
+    ]
+    sb.table("body_metrics").upsert(metrics_payload, ignore_duplicates=True).execute()
 
-    # Mark as bootstrapped
-    sb.table("app_config").upsert(
-        {"key": "bootstrapped", "value": "1"}, on_conflict="key"
-    ).execute()
+    # ── Mark as bootstrapped ───────────────────────────────────────────────────
+    sb.table("app_config").upsert({"key": "bootstrapped", "value": "1"}).execute()
+
 
 
 def is_bootstrapped():
@@ -253,7 +260,7 @@ def get_current_mc():
 
 def set_current_mc(mc):
     sb = get_sb()
-    sb.table("app_config").upsert({"key": "current_mc", "value": mc}, on_conflict="key").execute()
+    sb.table("app_config").upsert({"key": "current_mc", "value": mc}).execute()
 
 def get_exercises(day):
     sb = get_sb()

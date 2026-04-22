@@ -548,13 +548,19 @@ def page_biometria():
             st.plotly_chart(fig, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONTROL DE NAVEGACION
+# CONTROL DE NAVEGACION Y ESTADO GLOBAL (CORREGIDO)
 # ─────────────────────────────────────────────────────────────────────────────
+# 1. INICIALIZACIÓN GLOBAL DEL ESTADO (Obligatorio antes del Sidebar)
+if "page" not in st.session_state:
+    st.session_state.page = "[ DASHBOARD ]"
+
+# 2. BOOTSTRAP DE DATOS
 if not is_bootstrapped():
     with st.spinner("INICIANDO BOOTSTRAP HACIA SUPABASE..."):
         bootstrap()
     st.rerun()
 
+# 3. SIDEBAR Y CONTROLES LATERALES
 with st.sidebar:
     st.markdown("### PANEL DE NAVEGACION")
     
@@ -566,9 +572,6 @@ with st.sidebar:
         st.rerun()
         
     st.markdown("---")
-    
-    if "page" not in st.session_state:
-        st.session_state.page = "DASHBOARD"
         
     SECTIONS = ["[ DASHBOARD ]", "[ ENTRENAMIENTO ]", "[ NUTRICION & PASOS ]", "[ BIOMETRIA ]"]
     
@@ -578,9 +581,10 @@ with st.sidebar:
             st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RENDERIZADO DE RUTAS
+# ENRUTAMIENTO DE PÁGINAS
 # ─────────────────────────────────────────────────────────────────────────────
 page = st.session_state.page
+
 if page == "[ DASHBOARD ]": page_dashboard()
 elif page == "[ ENTRENAMIENTO ]": page_entrenamiento()
 elif page == "[ NUTRICION & PASOS ]": page_nutricion()

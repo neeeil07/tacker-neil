@@ -645,14 +645,17 @@ def macro_bar(label, current, target, color):
     pct = min(current / target, 1.0) if target > 0 else 0
     over = current > target
     bar_color = "#e74c3c" if over else color
+    pct_label = f"EXCEDIDO ({current/target*100:.0f}%)" if over else f"{pct*100:.0f}%"
     st.markdown(f"""
-    <div style='margin-bottom:8px'>
-      <div style='display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px'>
-        <span><b>{label}</b></span>
-        <span style='color:{"#e74c3c" if over else "#94a3b8"}'>  {current:.0f} / {target} {" " if over else ""}</span>
+    <div style='margin-bottom:10px'>
+      <div style='display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px'>
+        <span style='color:#c9d1d9;font-weight:500'>{label}</span>
+        <span style='color:{"#e74c3c" if over else "#8b949e"};
+               font-size:12px'>{current:.0f} / {target} &nbsp; {pct_label}</span>
       </div>
-      <div style='background:#e9ecef;border-radius:8px;height:12px'>
-        <div style='background:{bar_color};width:{pct*100:.1f}%;height:12px;border-radius:8px;transition:width 0.3s'></div>
+      <div style='background:#21262d;border-radius:6px;height:8px;overflow:hidden'>
+        <div style='background:{bar_color};width:{pct*100:.1f}%;height:8px;
+             border-radius:6px;transition:width 0.4s ease'></div>
       </div>
     </div>""", unsafe_allow_html=True)
 
@@ -778,6 +781,31 @@ def page_dashboard():
     prot_pct = int(compliance["prot_ok"] / total_days * 100) if total_days else 0
     s3.metric("Dias con kcal ok", f"{compliance['kcal_ok']}/{total_days}", f"{kcal_pct}%")
     s4.metric("Dias con proteina ok", f"{compliance['prot_ok']}/{total_days}", f"{prot_pct}%")
+
+    st.markdown("---")
+
+    # ── Sesion de hoy ──
+    today_weekday = date.today().isoweekday()  # 1=Mon .. 7=Sun
+    # DAY_LABELS keys: 1=DOM,2=LUN,3=MAR,4=MIE,5=JUE,6=VIE
+    weekday_to_day = {7: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6}  # ISO weekday -> training day
+    today_day = weekday_to_day.get(today_weekday)
+    if today_day:
+        t_abbr, t_descr = DAY_LABELS[today_day]
+        day_key = f"day{today_day}"
+        st.markdown(
+            f"<div style='background:#161b22;border:1px solid #21262d;border-left:3px solid #1f6feb;"
+            f"border-radius:8px;padding:14px 18px;margin-bottom:4px'>"
+            f"<div style='font-size:0.72rem;color:#58a6ff;font-weight:600;letter-spacing:0.07em;"
+            f"text-transform:uppercase;margin-bottom:4px'>Sesion de hoy &mdash; {t_abbr}</div>"
+            f"<div style='font-size:1rem;color:#e6edf3;font-weight:500'>{t_descr}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        if st.button(f"Ir a la sesion de hoy", key="btn_today_session", type="primary"):
+            st.session_state.page = day_key
+            st.rerun()
+    else:
+        st.info("Hoy es dia de descanso. Descansa bien.")
 
     st.markdown("---")
 
@@ -913,8 +941,13 @@ def page_day(day):
     delta_ton = session_ton - prev_ton
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Tonelaje total", f"{session_ton:,.0f} kg",
-              f"{delta_ton:+,.0f} kg vs {prev_mc}" if prev_mc else None)
+    if prev_mc and prev_ton > 0:
+        m1.metric("Tonelaje total", f"{session_ton:,.0f} kg",
+                  f"{delta_ton:+,.0f} kg vs {prev_mc}")
+    elif session_ton == 0:
+        m1.metric("Tonelaje total", "0 kg", "Sin series registradas")
+    else:
+        m1.metric("Tonelaje total", f"{session_ton:,.0f} kg", "Primer ciclo")
     m2.metric("Ejercicios", f"{len(exercises)}")
     m2.caption(f"Microciclo: **{current_mc}**")
 
@@ -962,14 +995,28 @@ def page_progress():
     df = pd.DataFrame(rows)
     df_nonzero = df[df["Tonelaje"] > 0]
     if not df_nonzero.empty:
+        # Use readable day names
+        day_name_map = {
+            "Day 1": "Dom", "Day 2": "Lun", "Day 3": "Mar",
+            "Day 4": "Mie", "Day 5": "Jue", "Day 6": "Vie"
+        }
+        df_nonzero = df_nonzero.copy()
+        df_nonzero["Dia"] = df_nonzero["Dia"].map(day_name_map).fillna(df_nonzero["Dia"])
         fig = px.bar(df_nonzero, x="MC", y="Tonelaje", color="Dia", barmode="group",
                      color_discrete_sequence=px.colors.qualitative.Bold)
         fig.update_layout(height=380, margin=dict(t=10,b=20,l=20,r=10), **dark_layout)
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Progresión por ejercicio + 1RM + RIR ──
+    # ── Progresion por ejercicio + 1RM + RIR ──
     st.subheader("Por ejercicio")
-    tab_labels = [f"Day {d}" for d in range(1,7)]
+    tab_labels = [
+        "Dom · Pierna",
+        "Lun · Espalda",
+        "Mar · Pecho",
+        "Mie · Pierna+",
+        "Jue · Espalda+",
+        "Vie · Hombro",
+    ]
     tabs = st.tabs(tab_labels)
 
     for ti, day in enumerate(range(1,7)):

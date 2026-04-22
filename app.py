@@ -764,25 +764,25 @@ def render_exercise_block(ex, current_mc):
 # PAGES
 # ─────────────────────────────────────────────────────────────────────────────
 def page_dashboard():
-    st.title("Centro de Mando")
+    st.title("Inicio")
     current_mc = get_current_mc()
 
-    # ── Streak + Compliance summary row ──
+    # ── Racha + Cumplimiento ──
     streak = get_streak()
     compliance = get_weekly_compliance(7)
     total_days = compliance["total"]
     s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Racha actual", f"{streak} dias", "Dias consecutivos registrados")
-    s2.metric("Dias registrados (7d)", f"{total_days}/7")
+    s1.metric("Racha", f"{streak} dias", "dias seguidos con registro")
+    s2.metric("Registros esta semana", f"{total_days}/7")
     kcal_pct = int(compliance["kcal_ok"] / total_days * 100) if total_days else 0
     prot_pct = int(compliance["prot_ok"] / total_days * 100) if total_days else 0
-    s3.metric("Cumplimiento Kcal", f"{compliance['kcal_ok']}/{total_days} dias", f"{kcal_pct}%")
-    s4.metric("Cumplimiento Proteina", f"{compliance['prot_ok']}/{total_days} dias", f"{prot_pct}%")
+    s3.metric("Dias con kcal ok", f"{compliance['kcal_ok']}/{total_days}", f"{kcal_pct}%")
+    s4.metric("Dias con proteina ok", f"{compliance['prot_ok']}/{total_days}", f"{prot_pct}%")
 
     st.markdown("---")
 
-    # ── Macro KPIs hoy ──
-    st.subheader("KPIs Nutricionales — Hoy")
+    # ── KPIs hoy ──
+    st.subheader("Nutricion de hoy")
     today_str = str(date.today())
     conn = get_conn()
     today_row = conn.execute("SELECT * FROM macros_log WHERE log_date=?", (today_str,)).fetchone()
@@ -815,7 +815,7 @@ def page_dashboard():
     st.markdown("---")
 
     # ── Registrar macros hoy ──
-    with st.expander("Registrar macros de hoy", expanded=not bool(today_row)):
+    with st.expander("Registrar lo que has comido hoy", expanded=not bool(today_row)):
         with st.form("macro_form"):
             col_a, col_b, col_c, col_d = st.columns(4)
             kcal    = col_a.number_input("Kcal",        value=float(cur["kcal"]),    step=10.0)
@@ -833,7 +833,7 @@ def page_dashboard():
     col_left, col_right = st.columns([1, 1])
 
     with col_left:
-        st.subheader("Distribucion de macros — Hoy")
+        st.subheader("Macros de hoy")
         macro_bar("Calorias", cur["kcal"],    MACROS_TARGET["kcal"],    "#e67e22")
         macro_bar("Proteina", cur["protein"], MACROS_TARGET["protein"], "#2980b9")
         macro_bar("Carbos",   cur["carbs"],   MACROS_TARGET["carbs"],   "#27ae60")
@@ -859,7 +859,7 @@ def page_dashboard():
             st.plotly_chart(fig_donut, use_container_width=True)
 
     with col_right:
-        st.subheader("Evolucion del peso corporal")
+        st.subheader("Peso corporal")
         conn = get_conn()
         bm = pd.DataFrame([dict(r) for r in conn.execute(
             "SELECT metric_date, weight, bf_pct FROM body_metrics WHERE weight IS NOT NULL ORDER BY metric_date"
@@ -879,7 +879,7 @@ def page_dashboard():
             st.plotly_chart(fig, use_container_width=True)
 
     # ── Macro trends ──
-    st.subheader("Historico de macros — Ultimas 4 semanas")
+    st.subheader("Calorias y proteina — ultimas 4 semanas")
     conn = get_conn()
     ml = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT * FROM macros_log ORDER BY log_date DESC LIMIT 28"
@@ -904,7 +904,7 @@ def page_dashboard():
 def page_day(day):
     abbr, descr = DAY_LABELS[day]
     current_mc = get_current_mc()
-    st.title(f"Day {day} — {abbr}  ·  {descr}")
+    st.title(f"{abbr} — {descr}")
 
     exercises = get_exercises(day)
     session_ton = sum(calc_tonelaje(e["id"], current_mc) for e in exercises)
@@ -942,7 +942,7 @@ def page_day(day):
 
 
 def page_progress():
-    st.title("Progresion de Tonelaje y Fuerza")
+    st.title("Progresion y fuerza")
     current_mc = get_current_mc()
     all_mcs = ["MC01","MC02","MC03","MC04","MC05","MC06","MC07","MC08"]
     dark_layout = dict(
@@ -953,7 +953,7 @@ def page_progress():
     )
 
     # ── Tonelaje total por día y por MC ──
-    st.subheader("Tonelaje total por Dia y Microciclo")
+    st.subheader("Tonelaje por sesion y por ciclo")
     rows = []
     for d in range(1, 7):
         ton_by_mc = get_day_tonelaje_by_mc(d)
@@ -968,7 +968,7 @@ def page_progress():
         st.plotly_chart(fig, use_container_width=True)
 
     # ── Progresión por ejercicio + 1RM + RIR ──
-    st.subheader("Progresion y Fuerza por ejercicio")
+    st.subheader("Por ejercicio")
     tab_labels = [f"Day {d}" for d in range(1,7)]
     tabs = st.tabs(tab_labels)
 
@@ -1059,7 +1059,7 @@ def page_progress():
                 st.plotly_chart(fig_rir, use_container_width=True)
 
     # ── Biometrics: Peso + BF% + Pasos + Sueño ──
-    st.subheader("Biometricos — Evolucion completa")
+    st.subheader("Peso, BF% y habitos")
     conn = get_conn()
     bm = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT metric_date,weight,bf_pct,steps,sleep FROM body_metrics ORDER BY metric_date"
@@ -1103,18 +1103,19 @@ def page_progress():
 
 
 def page_settings():
-    st.title("Configuracion")
+    st.title("Ajustes de la app")
     current_mc = get_current_mc()
     all_mcs = [f"MC{i:02d}" for i in range(1,9)]
-    new_mc = st.selectbox("Microciclo activo", all_mcs,
+    st.subheader("Ciclo activo")
+    new_mc = st.selectbox("Selecciona el microciclo en el que estas ahora", all_mcs,
                           index=all_mcs.index(current_mc) if current_mc in all_mcs else 4)
     if new_mc != current_mc:
         set_current_mc(new_mc)
-        st.success(f"Microciclo cambiado a {new_mc}")
+        st.success(f"Cambiado a {new_mc}")
         st.rerun()
 
     st.markdown("---")
-    st.subheader("Registro de metricas corporales")
+    st.subheader("Peso, pasos y sueno")
     with st.form("body_form"):
         col1, col2, col3, col4 = st.columns(4)
         b_date  = col1.date_input("Fecha", value=date.today())
@@ -1131,7 +1132,7 @@ def page_settings():
             st.success("Guardado correctamente.")
 
     st.markdown("---")
-    st.subheader("Historial de metricas corporales")
+    st.subheader("Ultimas entradas")
     conn = get_conn()
     bm = pd.DataFrame([dict(r) for r in conn.execute(
         "SELECT metric_date,weight,steps,sleep,bf_pct,notes FROM body_metrics ORDER BY metric_date DESC LIMIT 14"
@@ -1142,7 +1143,7 @@ def page_settings():
 
     # ── Deload warning ──
     st.markdown("---")
-    st.subheader("Analisis de fatiga acumulada")
+    st.subheader("Como vas con la fatiga")
     conn = get_conn()
     exs_all = conn.execute("SELECT id FROM exercises WHERE active=1").fetchall()
     low_rir_count = sum(
@@ -1165,10 +1166,10 @@ def page_settings():
     else:
         st.success(f"Fatiga bajo control en {current_mc}. RIR general adecuado.")
 
-    # ── Export CSV ──
     st.markdown("---")
-    st.subheader("Exportar datos")
-    if st.button("Generar exportacion CSV"):
+    st.subheader("Descargar todos tus datos")
+    st.caption("Genera un ZIP con tres archivos CSV: series de entreno, macros y metricas corporales.")
+    if st.button("Preparar exportacion"):
         import io, zipfile
         sets_df, macros_df, metrics_df = export_all_csv()
         zip_buf = io.BytesIO()
@@ -1185,13 +1186,14 @@ def page_settings():
         )
 
     st.markdown("---")
-    if st.button("Re-ejecutar bootstrap (resetea ejercicios historicos)"):
+    st.caption("Zona peligrosa: esto borra y recrea todos los ejercicios historicos desde cero.")
+    if st.button("Restaurar datos de ejemplo"):
         conn = get_conn()
         conn.execute("DELETE FROM app_config WHERE key='bootstrapped'")
         conn.commit()
         bootstrap(conn)
         conn.close()
-        st.success("Bootstrap completado."); st.rerun()
+        st.success("Datos restaurados correctamente."); st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
@@ -1359,28 +1361,56 @@ if not is_bootstrapped():
     st.rerun()
 
 with st.sidebar:
-    st.markdown("## TRAINING HUB")
+    st.markdown("""
+    <div style='padding:4px 0 12px 0'>
+      <div style='font-size:1.05rem;font-weight:700;color:#e6edf3;letter-spacing:-0.01em'>Neil Mesociclo</div>
+      <div style='font-size:0.78rem;color:#58a6ff;margin-top:2px'>Seguimiento de entrenamiento</div>
+    </div>
+    """, unsafe_allow_html=True)
+
     current_mc = get_current_mc()
-    st.markdown(f"**Microciclo activo:** `{current_mc}`")
-    st.markdown("---")
-    PAGES = {
-        "Dashboard":           "dashboard",
-        "Day 1 — DOM · Pierna": "day1",
-        "Day 2 — LUN · Espalda": "day2",
-        "Day 3 — MAR · Pecho": "day3",
-        "Day 4 — MIE · Pierna+": "day4",
-        "Day 5 — JUE · Espalda+": "day5",
-        "Day 6 — VIE · Hombro": "day6",
-        "Progresion":          "progress",
-        "Configuracion":       "settings",
-    }
-    if "page" not in st.session_state:
-        st.session_state.page = "dashboard"
-    for label, key in PAGES.items():
+    st.markdown(
+        f"<div style='background:#1f6feb22;border:1px solid #1f6feb55;border-radius:6px;"
+        f"padding:6px 10px;font-size:0.82rem;color:#58a6ff;margin-bottom:12px'>"
+        f"Ciclo activo &nbsp; <b style='color:#e6edf3'>{current_mc}</b></div>",
+        unsafe_allow_html=True
+    )
+
+    # Bloque: Resumen
+    st.markdown("<div style='font-size:0.7rem;color:#484f58;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px'>Resumen</div>", unsafe_allow_html=True)
+    if st.button("Inicio", key="nav_dashboard", use_container_width=True,
+                 type="primary" if st.session_state.get("page") == "dashboard" else "secondary"):
+        st.session_state.page = "dashboard"; st.rerun()
+
+    # Bloque: Entrenamientos
+    st.markdown("<div style='font-size:0.7rem;color:#484f58;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin:10px 0 4px 0'>Entrenamientos</div>", unsafe_allow_html=True)
+    DAY_NAV = [
+        ("Domingo  ·  Pierna y Hombro",   "day1"),
+        ("Lunes  ·  Espalda y Biceps",     "day2"),
+        ("Martes  ·  Pecho y Triceps",     "day3"),
+        ("Miercoles  ·  Pierna comp.",     "day4"),
+        ("Jueves  ·  Espalda y Biceps",    "day5"),
+        ("Viernes  ·  Hombro y Pecho",     "day6"),
+    ]
+    for label, key in DAY_NAV:
         if st.button(label, key=f"nav_{key}", use_container_width=True,
-                     type="primary" if st.session_state.page == key else "secondary"):
-            st.session_state.page = key
-            st.rerun()
+                     type="primary" if st.session_state.get("page") == key else "secondary"):
+            st.session_state.page = key; st.rerun()
+
+    # Bloque: Analisis
+    st.markdown("<div style='font-size:0.7rem;color:#484f58;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin:10px 0 4px 0'>Analisis</div>", unsafe_allow_html=True)
+    if st.button("Progresion y fuerza", key="nav_progress", use_container_width=True,
+                 type="primary" if st.session_state.get("page") == "progress" else "secondary"):
+        st.session_state.page = "progress"; st.rerun()
+
+    # Bloque: App
+    st.markdown("<div style='font-size:0.7rem;color:#484f58;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin:10px 0 4px 0'>App</div>", unsafe_allow_html=True)
+    if st.button("Ajustes de la app", key="nav_settings", use_container_width=True,
+                 type="primary" if st.session_state.get("page") == "settings" else "secondary"):
+        st.session_state.page = "settings"; st.rerun()
+
+if "page" not in st.session_state:
+    st.session_state.page = "dashboard"
 
 page = st.session_state.page
 if   page == "dashboard": page_dashboard()
@@ -1392,3 +1422,4 @@ elif page == "day5":      page_day(5)
 elif page == "day6":      page_day(6)
 elif page == "progress":  page_progress()
 elif page == "settings":  page_settings()
+

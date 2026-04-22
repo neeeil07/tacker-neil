@@ -884,7 +884,7 @@ def page_dashboard():
                 plot_bgcolor="rgba(0,0,0,0)",
                 font=dict(color="#c9d1d9")
             )
-            st.plotly_chart(fig_donut, use_container_width=True)
+            st.plotly_chart(fig_donut, use_container_width=True, key="dash_donut")
 
     with col_right:
         st.subheader("Peso corporal")
@@ -904,7 +904,7 @@ def page_dashboard():
                 font=dict(color="#c9d1d9"),
                 xaxis=dict(gridcolor="#21262d"), yaxis=dict(title="kg", gridcolor="#21262d")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="dash_weight")
 
     # ── Macro trends ──
     st.subheader("Calorias y proteina — ultimas 4 semanas")
@@ -926,7 +926,7 @@ def page_dashboard():
             xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d"),
             legend=dict(bgcolor="rgba(0,0,0,0)")
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True, key="dash_macros_trend")
 
 
 def page_day(day):
@@ -1005,7 +1005,7 @@ def page_progress():
         fig = px.bar(df_nonzero, x="MC", y="Tonelaje", color="Dia", barmode="group",
                      color_discrete_sequence=px.colors.qualitative.Bold)
         fig.update_layout(height=380, margin=dict(t=10,b=20,l=20,r=10), **dark_layout)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="prog_tonelaje_global")
 
     # ── Progresion por ejercicio + 1RM + RIR ──
     st.subheader("Por ejercicio")
@@ -1050,7 +1050,7 @@ def page_progress():
                         title="Tonelaje por MC", yaxis_title="Reps x Kg",
                         height=300, margin=dict(t=40,b=20,l=20,r=10), **dark_layout
                     )
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.plotly_chart(fig2, use_container_width=True, key=f"prog_ton_{day}_{ex_id}")
                 else:
                     st.info("Sin datos de tonelaje.")
 
@@ -1084,7 +1084,7 @@ def page_progress():
                         title="1RM Estimado (Epley)", yaxis_title="kg",
                         height=300, margin=dict(t=40,b=20,l=20,r=10), **dark_layout
                     )
-                    st.plotly_chart(fig_rm, use_container_width=True)
+                    st.plotly_chart(fig_rm, use_container_width=True, key=f"prog_1rm_{day}_{ex_id}")
                 else:
                     st.info("Sin datos para 1RM.")
 
@@ -1103,7 +1103,7 @@ def page_progress():
                     title="Tendencia RIR promedio", yaxis_title="RIR",
                     height=220, margin=dict(t=40,b=20,l=20,r=10), **dark_layout
                 )
-                st.plotly_chart(fig_rir, use_container_width=True)
+                st.plotly_chart(fig_rir, use_container_width=True, key=f"prog_rir_{day}_{ex_id}")
 
     # ── Biometrics: Peso + BF% + Pasos + Sueño ──
     st.subheader("Peso, BF% y habitos")
@@ -1129,7 +1129,7 @@ def page_progress():
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                 font=dict(color="#c9d1d9"), legend=dict(bgcolor="rgba(0,0,0,0)")
             )
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, use_container_width=True, key="prog_body_metrics")
         with c_habits:
             bm_hab = bm.dropna(subset=["steps","sleep"], how="all")
             if not bm_hab.empty:
@@ -1146,7 +1146,7 @@ def page_progress():
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#c9d1d9"), legend=dict(bgcolor="rgba(0,0,0,0)")
                 )
-                st.plotly_chart(fig4, use_container_width=True)
+                st.plotly_chart(fig4, use_container_width=True, key="prog_habits")
 
 
 def page_settings():
